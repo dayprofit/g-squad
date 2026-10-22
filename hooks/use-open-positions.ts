@@ -36,8 +36,7 @@ export interface OpenPosition {
   exit_spot_time?: number;
 }
 
-// How long (ms) to keep a just-closed position in state so SmartCharts can
-// render the exit spot and P&L label markers before removing it.
+// Briefly retain a closed position so the dashboard can observe its final state.
 const CLOSED_POSITION_TTL_MS = 1500;
 
 export function useOpenPositions(

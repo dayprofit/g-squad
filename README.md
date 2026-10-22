@@ -1,63 +1,61 @@
-# Rise/Fall Trading App
+# G-squad
 
-A self-hosted Rise/Fall trading app built on the Deriv WebSocket API. Supports CALL (Rise) and PUT (Fall) contract types with an interactive SmartCharts chart, real-time tick streaming, and open/closed position management.
+Mobile-first trading workspace for a user's application account and Deriv account. Application registration and sessions are stored in Neo4j; Deriv OAuth remains a separate authorization flow.
 
-## Prerequisites
+## Requirements
 
-- Node.js 18.18 or later
+- Node.js 20 or later
+- Neo4j 5.x or Neo4j Aura
+- A Deriv registered application ID and redirect URI
 
-## Step 1: Register Your App ID
+## Configure
 
-1. Log in to your Deriv account and go to the [API Token page](https://app.deriv.com/account/api-token) to create a token with the required scopes.
-2. Navigate to [App Registration](https://developers.deriv.com/dashboard/) and register a new application.
-3. Set the **Redirect URI** to the URL where you will host this app (e.g. `http://localhost:3000` for local development).
-4. Copy the **App ID** shown after registration — you will need it in the next step.
-
-## Step 2: Configure `.env.production`
-
-Copy `.env.example` to `.env.production` and fill in your values:
-
-```bash
-cp .env.example .env.production
-```
-
-Edit `.env.production`:
+Create `.env.local` with server-only Neo4j credentials and the public Deriv application ID:
 
 ```env
-NEXT_PUBLIC_DERIV_APP_ID=your_app_id_here
-# NEXT_PUBLIC_DERIV_REDIRECT_URI=https://your-app.example.com/path/  # optional
-NEXT_PUBLIC_DERIV_APP_NAME=your_app_name_here
-NEXT_PUBLIC_DERIV_SHOW_APP_NAME=true
-NEXT_PUBLIC_DERIV_REFERRAL_LINK=your_referral_link_here
-NEXT_PUBLIC_DERIV_OAUTH_SCOPES=trade,account_manage
+NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=replace-with-a-secret
+NEO4J_DATABASE=neo4j
+DERIV_TOKEN_ENCRYPTION_KEY=generate-a-base64-encoded-32-byte-key
+
+NEXT_PUBLIC_DERIV_APP_ID=your-registered-app-id
+NEXT_PUBLIC_DERIV_REDIRECT_URI=http://localhost:3000
+NEXT_PUBLIC_DERIV_APP_NAME=G-squad
+NEXT_PUBLIC_DERIV_OAUTH_SCOPES=trade
 NEXT_PUBLIC_DERIV_ENV=production
 ```
 
-| Variable | Description |
-|---|---|
-| `NEXT_PUBLIC_DERIV_APP_ID` | Your Deriv app ID from the App Registration dashboard |
-| `NEXT_PUBLIC_DERIV_REDIRECT_URI` | **Optional.** OAuth redirect URI. When unset, login returns to the URL the app is opened on, so that URL must be registered as a redirect URI in your Deriv app. Set it only to pin a fixed redirect (for example, a URL with a path); it must then exactly match a registered URI. |
-| `NEXT_PUBLIC_DERIV_APP_NAME` | In-app display name (header, tab title, favicon). Set in App Builder Customise. OAuth/consent registration name is configured separately and is not this env var. |
-| `NEXT_PUBLIC_DERIV_SHOW_APP_NAME` | `true` (default) shows the name next to the logo on desktop; `false` hides it (logo only). Tab title / favicon still use `NEXT_PUBLIC_DERIV_APP_NAME`. |
-| `NEXT_PUBLIC_DERIV_REFERRAL_LINK` | Affiliate referral link shown to unauthenticated users (optional) |
-| `NEXT_PUBLIC_DERIV_OAUTH_SCOPES` | Comma-separated OAuth scopes (e.g. `trade,account_manage`) |
-| `NEXT_PUBLIC_DERIV_ENV` | `production` to connect to the live Deriv endpoint; `preview` for staging |
+Generate the encryption key with `openssl rand -base64 32`. Never use a `NEXT_PUBLIC_` prefix for database credentials, the encryption key, or Deriv tokens. Do not commit `.env.local` or production secrets. The database account must be allowed to create uniqueness constraints and read/write application nodes.
 
-For local development, copy `.env.production` to `.env.local` — Next.js will load `.env.local` automatically and it takes precedence over `.env.production`.
+The app creates these Neo4j uniqueness constraints on first registration:
 
-## Step 3: Local Development
+- `AppUser.email`
+- `AppUser.accountId`
+- `AppSession.tokenHash`
+
+Application passwords are stored as scrypt hashes. Login sessions use random opaque tokens stored only as SHA-256 hashes in Neo4j and sent to the browser in HTTP-only, SameSite cookies. Deriv access and refresh tokens are AES-GCM encrypted in Neo4j and are never written to browser storage.
+
+## Run
 
 ```bash
 npm install
 npm run dev
 ```
 
-The app is available at `http://localhost:3000`.
+Open `http://localhost:3000`. Registration and app login require a reachable Neo4j instance. Deriv account connection requires a valid public app ID and matching registered redirect URI.
 
-## Step 4: Build for Production
+## Build and deploy
 
 ```bash
 npm run build
+npm start
 ```
 
-This produces a fully static export in the `/out` directory. Serve the contents of `/out` from any web server or static file host.
+This application now uses server route handlers for authentication and saved configuration. Deploy it to a Node.js-compatible Next.js host; a static export or static file host cannot run these routes.
+
+## Trading automation status
+
+The current app can display live Deriv account data and persist risk configuration, but it does not include a persistent, independently running trading worker. Start and Stop remain disabled. Do not enable real-money trading until a worker is deployed with server-side Deriv authorization, per-user trade isolation, contract monitoring, idempotency, and enforced session risk limits. The UI does not claim a worker is running and does not place automatic trades.
+
+The requested logo is served from `public/logo.png` and is used by the app header and favicon.

@@ -2,16 +2,16 @@
 
 import { createContext, useContext } from 'react';
 import { useDerivWS } from '@deriv/core';
-import { useAuth } from '@/hooks/use-auth';
+import { useServerDerivAuth } from '@/hooks/use-server-deriv-auth';
 import { useBalanceSync } from '@/hooks/use-balance-sync';
 import type { DerivWS } from '@deriv/core';
-import type { UseAuthReturn } from '@/hooks/use-auth';
+import type { ServerDerivAuth } from '@/hooks/use-server-deriv-auth';
 
 interface DerivWSContextValue {
   ws: DerivWS | null;
   isConnected: boolean;
   isExhausted: boolean;
-  auth: UseAuthReturn;
+  auth: ServerDerivAuth;
 }
 
 const DerivWSContext = createContext<DerivWSContextValue | null>(null);
@@ -22,7 +22,7 @@ const DerivWSContext = createContext<DerivWSContextValue | null>(null);
  * and recreate the connection.
  */
 export function DerivWSProvider({ children }: { children: React.ReactNode }) {
-  const auth = useAuth();
+  const auth = useServerDerivAuth();
   const { ws, isConnected, isExhausted } = useDerivWS({
     url: auth.wsUrl,
     accountId: auth.activeAccountId ?? undefined,

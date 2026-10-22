@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { useActiveSymbols, useTicks } from '@deriv/core';
-import type { DerivWS, ActiveSymbol, Tick, DurationLimits, ContractInfo } from '@deriv/core';
+import { useActiveSymbols } from '@deriv/core';
+import type { DerivWS, ActiveSymbol } from '@deriv/core';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
-import { useOpenPositions, type OpenPosition } from './use-open-positions';
+import { useOpenPositions } from './use-open-positions';
 import { useClosedPositions, type ClosedPosition } from './use-closed-positions';
-import { useSellContract } from './use-sell-contract';
 
 export interface UseBaseTradingParams {
   /** Shared WebSocket instance from DerivWSProvider. */
@@ -23,29 +22,10 @@ export interface UseBaseTradingParams {
 }
 
 export interface UseBaseTradingReturn {
-  /** Underlying WebSocket instance — pass to useBuy / useProposal in the template. */
-  ws: DerivWS | null;
-  isConnected: boolean;
   isLoading: boolean;
   error: string | null;
-  symbols: ActiveSymbol[];
   activeSymbol: ActiveSymbol | null;
-  selectSymbol: (symbol: string) => void;
-  currentTick: Tick | null;
-  /** Raw price history — useful for chart rendering and stat computation. */
-  prices: number[];
-  pipSize: number;
-  contracts: ContractInfo[];
-  contractsAvailable: boolean;
-  durationLimits: DurationLimits;
-  defaultStake: number;
-  openPositions: OpenPosition[];
   closedPositions: ClosedPosition[];
-  refreshClosedPositions: () => Promise<void>;
-  sellContract: (contractId: number, bidPrice: string) => Promise<void>;
-  sellingId: number | null;
-  sellError: string | null;
-  clearSellError: () => void;
 }
 
 /**
@@ -72,27 +52,14 @@ export function useBaseTrading({
     }
   }, [isExhausted, ws, onAuthWSFailed]);
 
-  const {
-    symbols,
-    activeSymbol,
-    selectSymbol,
-    contracts,
-    contractsAvailable,
-    durationLimits,
-    defaultStake,
-    isLoading: symbolsLoading,
-  } = useActiveSymbols(ws, isConnected, contractTypes);
+  const { activeSymbol, isLoading: symbolsLoading } = useActiveSymbols(ws, isConnected, contractTypes);
 
-  const { currentTick, prices, pipSize } = useTicks(ws, isConnected, activeSymbol);
-
-  // Surface WS-level errors as toasts. Buy and sell errors are handled by
-  // their own hooks and are excluded here to avoid double-reporting.
+  // Surface errors from the live market and settlement subscriptions.
   useEffect(() => {
     if (!ws || !isConnected) return;
     return ws.onMessage(data => {
       if (!data.error) return;
       const msgType = data.msg_type as string | undefined;
-      if (msgType === 'buy' || msgType === 'sell') return;
       const err = data.error as Record<string, string>;
       // A duplicate subscription is an internal stream-lifecycle event that the
       // subscription layer recovers from on its own, so it is a developer
@@ -114,50 +81,27 @@ export function useBaseTrading({
   }, [ws, isConnected, localize]);
 
   const { positions: openPositions } = useOpenPositions(ws, isConnected, isAuthenticated);
-
   const { positions: closedPositions, refresh: refreshClosedPositions } = useClosedPositions(
     ws,
     isConnected,
     isAuthenticated
   );
+  const settledContracts = useRef(new Set<number>());
 
-  const {
-    sellContract: sellContractRaw,
-    sellingId,
-    sellError,
-    clearSellError,
-  } = useSellContract(ws, isConnected);
-
-  // Refresh the closed-positions table after each successful sell.
-  const sellContract = useCallback(
-    async (contractId: number, bidPrice: string) => {
-      await sellContractRaw(contractId, bidPrice);
-      await refreshClosedPositions();
-    },
-    [sellContractRaw, refreshClosedPositions]
-  );
+  useEffect(() => {
+    for (const position of openPositions) {
+      const isClosed = !!position.is_sold || !!position.is_expired || position.status !== 'open';
+      if (isClosed && !settledContracts.current.has(position.contract_id)) {
+        settledContracts.current.add(position.contract_id);
+        void refreshClosedPositions();
+      }
+    }
+  }, [openPositions, refreshClosedPositions]);
 
   return {
-    ws,
-    isConnected,
     isLoading: !isConnected || symbolsLoading,
     error: null,
-    symbols,
     activeSymbol,
-    selectSymbol,
-    currentTick,
-    prices,
-    pipSize,
-    contracts,
-    contractsAvailable,
-    durationLimits,
-    defaultStake,
-    openPositions,
     closedPositions,
-    refreshClosedPositions,
-    sellContract,
-    sellingId,
-    sellError,
-    clearSellError,
   };
 }

@@ -1,7 +1,6 @@
 import { Providers } from './providers';
-import { DerivWSProvider } from './deriv-ws-provider';
+import { AppSessionProvider } from '@/components/app/app-session';
 import { Toaster } from '@/components/ui/sonner';
-import ViewportScaler from './ViewportScaler';
 import { EnvCheck } from './env-check';
 
 /**
@@ -28,9 +27,7 @@ import { EnvCheck } from './env-check';
 export function TemplateLayout({ children }: { children: React.ReactNode }) {
   return (
     <Providers>
-      <DerivWSProvider>
-        <ViewportScaler>{children}</ViewportScaler>
-      </DerivWSProvider>
+      <AppSessionProvider>{children}</AppSessionProvider>
       <Toaster />
       <EnvCheck />
     </Providers>

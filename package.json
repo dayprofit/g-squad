@@ -5,13 +5,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "copy-smartcharts-assets": "node scripts/copy-smartcharts-assets.js",
-    "postinstall": "node scripts/copy-smartcharts-assets.js",
-    "prebuild": "node scripts/copy-smartcharts-assets.js"
+    "start": "next start"
   },
   "dependencies": {
     "@deriv-com/translations": "^1.4.7",
+    "@neondatabase/serverless": "^1.2.0",
     "@radix-ui/react-accordion": "^1.1.2",
     "@radix-ui/react-alert-dialog": "^1.0.5",
     "@radix-ui/react-aspect-ratio": "^1.0.3",
@@ -47,7 +45,8 @@
     "date-fns": "^3.0.0",
     "i18next": "^26.3.6",
     "lucide-react": "^0.400.0",
-    "next": "16.3.6",
+    "neo4j-driver": "^6.2.0",
+    "next": "^16.4.2",
     "next-themes": "^0.2.1",
     "react": "^19.2.8",
     "react-day-picker": "^9.0.0",
@@ -60,8 +59,7 @@
     "tailwindcss-animate": "^1.0.7",
     "undici": "7.29.1",
     "uuid": "11.1.1",
-    "vaul": "^1.1.1",
-    "@deriv-com/smartcharts-champion": "1.10.8"
+    "vaul": "^1.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
