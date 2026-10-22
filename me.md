@@ -544,3 +544,4 @@ When the loss limit is reached:
 Enforce these controls in the backend, not merely in frontend JavaScript.
 
 Use a and also use neo as the database 
+then find this file: 6819650.png use it as the app logo for the app 
