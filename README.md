@@ -86,3 +86,26 @@ This application now uses server route handlers for authentication and saved con
 The dashboard can run automated trades using the fixed Volatility 100 (1s) Index market and 5-tick contracts. Signals require both a volatility breakout and momentum in the breakout direction. After a settled loss, the next stake is multiplied by 1.5; after a profitable trade it resets to the configured base stake. The bot allows only one bot-managed open contract at a time and stops if the account balance, configured loss budget, or another configured session limit cannot cover the next trade. It runs in the open dashboard tab and stops if the app closes, the connection fails, the account changes, or order processing fails. Demo and real Deriv accounts are supported; starting the bot on a real account requires explicit confirmation and places trades with real funds. This is not a persistent server-side worker and cannot continue trading while the user is offline or the app is closed. Automated trading can lose money and does not guarantee profit.
 
 The requested logo is served from `public/logo.png` and is used by the app header and favicon.
+
+## USDT subscriptions (TRON Nile testnet)
+
+Owners can enable or disable the trading-bot subscription gate and configure the USDT price and access duration in **Admin → Settings**. Users get a backend-generated, one-time deposit address from the Subscription tab. Only confirmed transfers of the configured amount activate access; separate partial transfers are not combined. The bot start API checks the stored expiry, and bot stop remains available without a subscription.
+
+This implementation is deliberately configured for **TRON Nile testnet only**. Do not use mainnet funds or enable this custody flow for production deposits without a separate security, custody, and operational review. Before enabling subscriptions, configure these server-only environment variables:
+
+```env
+# Generate independently and keep unchanged; replacing it makes stored wallet keys unusable.
+SUBSCRIPTION_WALLET_ENCRYPTION_KEY=
+# The verified TRON Nile TRC-20 contract address whose symbol is USDT and decimals are 6.
+TRON_USDT_CONTRACT_ADDRESS=
+# Optional TronGrid API key to improve authenticated API access/rate limits.
+TRON_GRID_API_KEY=
+# Required cron bearer secret. Vercel uses CRON_SECRET automatically.
+CRON_SECRET=
+```
+
+Generate `SUBSCRIPTION_WALLET_ENCRYPTION_KEY` with `openssl rand -base64 32`. Store the output only in the deployment's server environment; never use a `NEXT_PUBLIC_` prefix or commit the key. Admin APIs and screens never return wallet private keys. The Owner's treasury address is created when subscriptions are enabled. The configured token address is checked on-chain for the `USDT` symbol and exactly six decimals when settings are saved and each scheduled payment scan runs.
+
+The included `vercel.json` schedules `/api/cron/subscriptions` every five minutes. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`; another host must schedule the same endpoint and send `Authorization: Bearer $SUBSCRIPTION_CRON_SECRET` (or `$CRON_SECRET`). The endpoint is not a background worker and deposits will not be checked unless the schedule is active. Scans process a bounded batch of user wallets each run. Keep the server available and monitor failed scans and sweep statuses.
+
+Automatic TRC-20 transfers require TRX fee resources in each user deposit wallet. On Nile, provide testnet TRX to deposit addresses as needed; `fee_required` sweeps retry after resources become available. Ambiguous or reverted sweep failures are marked for manual review and are not automatically resent, to avoid duplicate transfers. Monitor payment and sweep statuses under **Admin → Settings**. Test deposit confirmation and treasury sweeps with Nile funds before enabling the gate for users.

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { ReactNode } from 'react';
 import {
   Activity, ArrowDownRight, ArrowLeft, ArrowUpRight, BarChart3, Bell, Briefcase, Check, CircleUserRound, Clock3, Copy,
-  Eye, LoaderCircle, LockKeyhole, Menu, MessageCircle, Search, Settings2, ShieldCheck, UserCog, UserPlus, Users, X,
+  Eye, ExternalLink, LoaderCircle, LockKeyhole, Menu, MessageCircle, RefreshCw, Search, Settings2, ShieldCheck, UserCog, UserPlus, Users, X,
 } from 'lucide-react';
 import { useAppSession } from '@/components/app/app-session';
 import type { TradingConfig } from '@/lib/trading-config';
@@ -571,7 +571,7 @@ export function AdminPanel() {
         ) : activeView === 'approvals' ? (
           <AdminApprovals adminRequest={adminRequest} withOverlay={withOverlay} onError={setError} onNotice={setNotice} />
         ) : activeView === 'settings' ? (
-          <AdminSettings withOverlay={withOverlay} onError={setError} onNotice={setNotice} />
+          <AdminSettings adminRequest={adminRequest} withOverlay={withOverlay} onError={setError} onNotice={setNotice} isOwner={isOwner} />
         ) : (
           <AdminOverview adminRequest={adminRequest} />
         )}
@@ -1337,10 +1337,12 @@ function AdminApprovals({ adminRequest, withOverlay, onError, onNotice }: {
   </section>;
 }
 
-function AdminSettings({ withOverlay, onError, onNotice }: {
+function AdminSettings({ adminRequest, withOverlay, onError, onNotice, isOwner }: {
+  adminRequest: AdminRequester;
   withOverlay: OverlayRunner;
   onError: (message: string) => void;
   onNotice: (message: string) => void;
+  isOwner: boolean;
 }) {
   const [retention, setRetention] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1379,14 +1381,150 @@ function AdminSettings({ withOverlay, onError, onNotice }: {
       } catch (reason) { onError(reason instanceof Error ? reason.message : 'Could not run retention cleanup.'); }
     });
   }
+  return <>
+    <section className="gq-admin-card">
+      <div className="gq-admin-card-heading"><div><h2>Audit data retention</h2><p>Unset means records are retained indefinitely. Deletion is never automatic; an Owner must run cleanup.</p></div></div>
+      <form className="gq-admin-settings-form" onSubmit={(event) => void save(event)}>
+        <label>Retention period in days<input type="number" min={30} max={3650} value={retention} placeholder="Keep indefinitely" disabled={loading} onChange={(event) => setRetention(event.target.value)} /></label>
+        <button className="gq-admin-primary" type="submit" disabled={loading}>Save policy</button>
+        <button className="gq-admin-secondary" type="button" disabled={loading || !retention} onClick={() => void runCleanup()}>Run cleanup now</button>
+      </form>
+      <div className="gq-admin-notice">Email/SMS delivery and external SSO are not configured. Admin notifications remain in-app; configure an identity/email provider before enabling those integrations.</div>
+    </section>
+    {isOwner && <AdminSubscriptionSettings adminRequest={adminRequest} withOverlay={withOverlay} onError={onError} onNotice={onNotice} />}
+  </>;
+}
+
+interface AdminSubscriptionData {
+  settings: { enabled: boolean; amountUsdt: number; durationDays: number };
+  network: string;
+  contractConfigured: boolean;
+  treasuryAddress: string | null;
+  wallets: {
+    id: string;
+    userName: string;
+    email: string;
+    address: string;
+    createdAt: string;
+    lastCheckedAt: string | null;
+  }[];
+  payments: {
+    id: string;
+    userName: string;
+    email: string;
+    depositAddress: string;
+    depositTxid: string;
+    amountUsdt: string;
+    expectedAmountUsdt: string;
+    status: string;
+    sweepStatus: string;
+    sweepTxid: string | null;
+    receivedAt: string;
+  }[];
+}
+
+function AdminSubscriptionSettings({ adminRequest, withOverlay, onError, onNotice }: {
+  adminRequest: AdminRequester;
+  withOverlay: OverlayRunner;
+  onError: (message: string) => void;
+  onNotice: (message: string) => void;
+}) {
+  const [data, setData] = useState<AdminSubscriptionData | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [amount, setAmount] = useState('');
+  const [duration, setDuration] = useState('30');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const result = await adminRequest(() => fetch('/api/admin/subscriptions', { cache: 'no-store' }));
+    const next = result as unknown as AdminSubscriptionData;
+    setData(next);
+    setEnabled(next.settings.enabled);
+    setAmount(next.settings.amountUsdt > 0 ? String(next.settings.amountUsdt) : '');
+    setDuration(String(next.settings.durationDays));
+  }, [adminRequest]);
+
+  useEffect(() => {
+    let active = true;
+    void refresh().catch((reason) => {
+      if (active) onError(reason instanceof Error ? reason.message : 'Could not load subscription settings.');
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [refresh, onError]);
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    await withOverlay('Saving subscription settings', async () => {
+      try {
+        await adminRequest(() => fetch('/api/admin/subscriptions', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled, amountUsdt: Number(amount || 0), durationDays: Number(duration) }),
+        }));
+        onNotice('Subscription settings saved.');
+        await refresh();
+      } catch (reason) {
+        onError(reason instanceof Error ? reason.message : 'Could not save subscription settings.');
+      } finally {
+        setSaving(false);
+      }
+    });
+  }
+
+  async function reject(paymentId: string) {
+    if (!window.confirm('Reject this pending payment? Confirm on-chain details before rejecting.')) return;
+    await withOverlay('Rejecting pending payment', async () => {
+      try {
+        await adminRequest(() => fetch('/api/admin/subscriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reject', paymentId }),
+        }));
+        onNotice('Pending payment rejected.');
+        await refresh();
+      } catch (reason) {
+        onError(reason instanceof Error ? reason.message : 'Could not reject this payment.');
+      }
+    });
+  }
+
   return <section className="gq-admin-card">
-    <div className="gq-admin-card-heading"><div><h2>Audit data retention</h2><p>Unset means records are retained indefinitely. Deletion is never automatic; an Owner must run cleanup.</p></div></div>
-    <form className="gq-admin-settings-form" onSubmit={(event) => void save(event)}>
-      <label>Retention period in days<input type="number" min={30} max={3650} value={retention} placeholder="Keep indefinitely" disabled={loading} onChange={(event) => setRetention(event.target.value)} /></label>
-      <button className="gq-admin-primary" type="submit" disabled={loading}>Save policy</button>
-      <button className="gq-admin-secondary" type="button" disabled={loading || !retention} onClick={() => void runCleanup()}>Run cleanup now</button>
+    <div className="gq-admin-card-heading">
+      <div><h2>USDT subscriptions</h2><p>Configure bot access, the TRON Nile price, and payment monitoring.</p></div>
+      <button className="gq-admin-secondary" type="button" onClick={() => void refresh().catch((reason) => onError(reason instanceof Error ? reason.message : 'Could not refresh subscription data.'))} disabled={loading}><RefreshCw size={14} />Refresh</button>
+    </div>
+    <form className="gq-subscription-admin-form" onSubmit={(event) => void save(event)}>
+      <label className="gq-subscription-admin-toggle"><input type="checkbox" checked={enabled} disabled={loading || saving} onChange={(event) => setEnabled(event.target.checked)} />Enable subscription requirement</label>
+      <label>Price in USDT<input type="number" min={enabled ? '0.01' : '0'} max="1000000000" step="0.01" value={amount} disabled={loading || saving} onChange={(event) => setAmount(event.target.value)} /></label>
+      <label>Access duration in days<input type="number" min="1" max="3650" step="1" value={duration} disabled={loading || saving} onChange={(event) => setDuration(event.target.value)} /></label>
+      <button className="gq-admin-primary" type="submit" disabled={loading || saving}>{saving ? 'Saving…' : 'Save subscription settings'}</button>
     </form>
-    <div className="gq-admin-notice">Email/SMS delivery and external SSO are not configured. Admin notifications remain in-app; configure an identity/email provider before enabling those integrations.</div>
+    {data && <div className="gq-admin-subscription-meta">
+      <p><strong>Network:</strong> {data.network}</p>
+      <p><strong>USDT contract:</strong> {data.contractConfigured ? 'Address configured; token symbol/decimals are checked on save and each scheduled scan.' : 'TRON_USDT_CONTRACT_ADDRESS is missing or invalid.'}</p>
+      <p><strong>Treasury address:</strong> {data.treasuryAddress ? <code>{data.treasuryAddress}</code> : 'Created automatically when subscriptions are enabled.'}</p>
+      <p>Wallet private keys are encrypted by the server and are never shown here or returned by an API. Deposit wallets need testnet TRX resources for automatic sweeps.</p>
+    </div>}
+    <div className="gq-admin-card-heading gq-admin-subscription-list-heading"><div><h2>User deposit wallets</h2><p>{data?.wallets.length ?? 0} backend-generated address(es); private keys remain server-only</p></div></div>
+    {data?.wallets.length ? <div className="gq-admin-user-list">{data.wallets.map((wallet) => <article className="gq-admin-user" key={wallet.id}>
+      <div className="gq-admin-subscription-payment-head"><div><strong>{wallet.userName}</strong><small>{wallet.email}</small></div></div>
+      <code className="gq-admin-subscription-address">{wallet.address}</code>
+      <small>Created {dateLabel(wallet.createdAt)} · last checked {dateLabel(wallet.lastCheckedAt)}</small>
+    </article>)}</div> : <p className="gq-admin-empty">{loading ? 'Loading user wallets…' : 'No user deposit wallets have been generated.'}</p>}
+    <div className="gq-admin-card-heading gq-admin-subscription-list-heading"><div><h2>Recent deposits</h2><p>Latest 300 on-chain payment records</p></div></div>
+    {data?.payments.length ? <div className="gq-admin-user-list">{data.payments.map((payment) => <article className="gq-admin-user" key={payment.id}>
+      <div className="gq-admin-subscription-payment-head"><div><strong>{payment.userName}</strong><small>{payment.email}</small></div><span className={`gq-admin-status ${payment.status === 'successful' ? '' : 'is-suspended'}`}>{payment.status}</span></div>
+      <p className="gq-admin-subscription-detail">{payment.amountUsdt} USDT received · expected {payment.expectedAmountUsdt} USDT · sweep {payment.sweepStatus.replace('_', ' ')}</p>
+      <code className="gq-admin-subscription-address">{payment.depositAddress}</code>
+      <div className="gq-admin-subscription-links">
+        <a href={`https://nile.tronscan.org/#/transaction/${encodeURIComponent(payment.depositTxid)}`} target="_blank" rel="noreferrer">Deposit transaction <ExternalLink size={13} /></a>
+        {payment.sweepTxid && <a href={`https://nile.tronscan.org/#/transaction/${encodeURIComponent(payment.sweepTxid)}`} target="_blank" rel="noreferrer">Treasury transfer <ExternalLink size={13} /></a>}
+        {payment.status === 'pending' && <button className="gq-admin-secondary" type="button" onClick={() => void reject(payment.id)}>Reject pending</button>}
+      </div>
+      <small>{dateLabel(payment.receivedAt)}</small>
+    </article>)}</div> : <p className="gq-admin-empty">{loading ? 'Loading payment records…' : 'No subscription payments recorded yet.'}</p>}
   </section>;
 }
 

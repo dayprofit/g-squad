@@ -293,6 +293,50 @@ export async function ensureDatabaseSchema(): Promise<void> {
       completed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`;
+    await sql`CREATE TABLE IF NOT EXISTS subscription_wallets (
+      id BIGSERIAL PRIMARY KEY,
+      wallet_type TEXT NOT NULL CHECK (wallet_type IN ('user', 'treasury')),
+      user_id UUID REFERENCES app_users(id) ON DELETE CASCADE,
+      address TEXT NOT NULL UNIQUE,
+      encrypted_private_key TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_checked_at TIMESTAMPTZ,
+      CHECK ((wallet_type = 'user' AND user_id IS NOT NULL) OR
+        (wallet_type = 'treasury' AND user_id IS NULL))
+    )`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS subscription_wallets_user_idx
+      ON subscription_wallets(user_id) WHERE wallet_type = 'user'`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS subscription_wallets_treasury_idx
+      ON subscription_wallets(wallet_type) WHERE wallet_type = 'treasury'`;
+    await sql`CREATE INDEX IF NOT EXISTS subscription_wallets_scan_idx
+      ON subscription_wallets(last_checked_at NULLS FIRST, created_at) WHERE wallet_type = 'user'`;
+    await sql`CREATE TABLE IF NOT EXISTS user_subscriptions (
+      user_id UUID PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE TABLE IF NOT EXISTS subscription_payments (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      wallet_id BIGINT NOT NULL REFERENCES subscription_wallets(id) ON DELETE CASCADE,
+      deposit_txid TEXT NOT NULL UNIQUE,
+      amount_raw NUMERIC(78, 0) NOT NULL,
+      expected_amount_raw NUMERIC(78, 0) NOT NULL,
+      token_contract TEXT NOT NULL,
+      duration_days INTEGER NOT NULL DEFAULT 30 CHECK (duration_days BETWEEN 1 AND 3650),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'successful', 'rejected')),
+      sweep_status TEXT NOT NULL DEFAULT 'queued' CHECK (sweep_status IN ('queued', 'sweeping', 'fee_required', 'submitted', 'swept', 'failed', 'not_required')),
+      sweep_txid TEXT,
+      sweep_started_at TIMESTAMPTZ,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`ALTER TABLE subscription_payments ADD COLUMN IF NOT EXISTS duration_days
+      INTEGER NOT NULL DEFAULT 30 CHECK (duration_days BETWEEN 1 AND 3650)`;
+    await sql`CREATE INDEX IF NOT EXISTS subscription_payments_user_idx
+      ON subscription_payments(user_id, received_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS subscription_payments_sweep_idx
+      ON subscription_payments(status, sweep_status, received_at)`;
   })().catch((error) => {
     schemaReady = undefined;
     throw error;

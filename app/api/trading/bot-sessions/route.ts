@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentAppUser } from '@/lib/server/app-auth';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
+import { getSubscriptionSettings } from '@/lib/server/subscription-wallets';
 
 export const runtime = 'nodejs';
 const ACCOUNT_ID_PATTERN = /^[A-Za-z0-9]{2,32}$/;
@@ -48,6 +49,21 @@ export async function POST(request: Request) {
       await getNeonSql()`UPDATE app_bot_sessions SET is_running = false, updated_at = now()
         WHERE user_id = ${user.id}::uuid AND deriv_account_id = ${accountId}`;
       return NextResponse.json({ success: true });
+    }
+    const subscriptionSettings = await getSubscriptionSettings();
+    if (subscriptionSettings.enabled) {
+      const activeSubscription = await getNeonSql()`SELECT expires_at > now() AS active
+        FROM user_subscriptions WHERE user_id = ${user.id}::uuid LIMIT 1` as Record<string, unknown>[];
+      if (activeSubscription[0]?.active !== true) {
+        const configured = subscriptionSettings.amountUsdt > 0 &&
+          Number.isInteger(subscriptionSettings.durationDays) && subscriptionSettings.durationDays > 0;
+        return NextResponse.json({
+          error: configured
+            ? 'An active subscription is required before starting the trading bot.'
+            : 'Subscriptions are enabled but have not been configured by the app owner.',
+          code: configured ? 'SUBSCRIPTION_REQUIRED' : 'SUBSCRIPTION_SETUP_REQUIRED',
+        }, { status: 402 });
+      }
     }
     const accountType = body.accountType;
     const currency = typeof body.currency === 'string' ? body.currency.trim().toUpperCase() : '';

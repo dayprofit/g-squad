@@ -32,6 +32,11 @@ interface TradingConfig {
   cooldownMinutes: number;
 }
 
+interface SubscriptionAccess {
+  settings: { enabled: boolean; configured: boolean };
+  subscription: { active: boolean };
+}
+
 const SUPPORTED_CONTRACT_TYPES = ['CALL', 'PUT'];
 
 function money(value: number, currency?: string): string {
@@ -59,7 +64,7 @@ function findCandidate(prices: number[]): 'CALL' | 'PUT' | null {
   return null;
 }
 
-export function HomeDashboard() {
+export function HomeDashboard({ onSubscribe }: { onSubscribe: () => void }) {
   const { ws, isConnected, isExhausted, auth } = useDerivWSContext();
   const { authState, activeAccount, activeAccountId, login, logout } = auth;
   const trading = useBaseTrading({ ws, isConnected, isExhausted, isAuthenticated: !!auth.wsUrl, onAuthWSFailed: () => { void logout(); }, contractTypes: SUPPORTED_CONTRACT_TYPES, preferredSymbol: FIXED_TRADING_SYMBOL });
@@ -74,6 +79,8 @@ export function HomeDashboard() {
   const [startingBot, setStartingBot] = useState(false);
   const [botSession, setBotSession] = useState<BotSession | null>(null);
   const [botMessage, setBotMessage] = useState('');
+  const [subscription, setSubscription] = useState<SubscriptionAccess | null>(null);
+  const [subscriptionError, setSubscriptionError] = useState('');
   const previousConnection = useRef<string | null>(null);
   const previousLatestSettlement = useRef<number | null>(null);
   const botRunningRef = useRef(false);
@@ -102,6 +109,39 @@ export function HomeDashboard() {
   currentOpenPositionsRef.current = trading.openPositions;
 
   const accountConnected = !!auth.wsUrl && isConnected && !!activeAccount;
+  const subscriptionBlocksBot = !subscription ||
+    (subscription.settings.enabled && (!subscription.settings.configured || !subscription.subscription.active));
+  const subscriptionMessage = subscriptionError || (!subscription
+    ? 'Checking subscription access…'
+    : subscription.settings.enabled && !subscription.settings.configured
+      ? 'Subscriptions are enabled but the app owner has not configured the price and duration.'
+      : subscription.settings.enabled && !subscription.subscription.active
+        ? 'An active subscription is required before you can start the trading bot.'
+        : '');
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/subscription', { cache: 'no-store' });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? 'Could not check subscription access.');
+        if (!cancelled) {
+          setSubscription(result as SubscriptionAccess);
+          setSubscriptionError('');
+        }
+      } catch (error) {
+        if (!cancelled) setSubscriptionError(error instanceof Error ? error.message : 'Could not check subscription access.');
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetch('/api/trading/config', { cache: 'no-store' })
@@ -168,6 +208,15 @@ export function HomeDashboard() {
       });
     }
   }, [addEntry]);
+
+  useEffect(() => {
+    if (!isBotRunning) return;
+    if (subscriptionError) {
+      stopBot('Subscription access could not be verified. Automated trading was stopped.');
+    } else if (subscription?.settings.enabled && !subscription.subscription.active) {
+      stopBot('The subscription is no longer active. Automated trading was stopped.');
+    }
+  }, [isBotRunning, stopBot, subscription, subscriptionError]);
 
   useEffect(() => {
     const state = auth.wsUrl ? (isConnected ? 'connected' : 'connecting') : 'disconnected';
@@ -424,6 +473,11 @@ export function HomeDashboard() {
 
   async function startBot() {
     if (!accountConnected || !activeAccount || !config || !isConnected || !ws) return;
+    if (subscriptionBlocksBot) {
+      setBotMessage(subscriptionMessage || 'An active subscription is required before you can start the trading bot.');
+      onSubscribe();
+      return;
+    }
     if (activeAccount.account_type === 'real' && !window.confirm(
       'Real-money trading warning\n\nThe bot will place automated trades using real funds in your selected Deriv account. Losses are possible. Confirm you want to start real-account automation?'
     )) return;
@@ -457,7 +511,16 @@ export function HomeDashboard() {
         }),
       });
       const result = await response.json();
-      if (!response.ok || !result.session) throw new Error(result.error ?? 'Could not save the bot session to Neon.');
+      if (!response.ok || !result.session) {
+        if (result.code === 'SUBSCRIPTION_REQUIRED' || result.code === 'SUBSCRIPTION_SETUP_REQUIRED') {
+          setSubscription((current) => current ? {
+            ...current,
+            subscription: { active: false },
+          } : current);
+          onSubscribe();
+        }
+        throw new Error(result.error ?? 'Could not save the bot session to Neon.');
+      }
       setBotSession({
         accountId: String(result.session.accountId),
         startingBalance: Number(result.session.startingBalance),
@@ -528,9 +591,10 @@ export function HomeDashboard() {
         <div className="gq-card-heading"><div className="gq-section-icon gq-section-icon-dark"><Bot size={18} /></div><div><h2>Automatic trading</h2><p>Fixed market · {FIXED_TRADING_SYMBOL_NAME}</p></div><span className={`gq-state-tag ${isBotRunning ? 'is-online' : 'is-unavailable'}`}>{isBotRunning ? 'RUNNING' : 'STOPPED'}</span></div>
         <div className="gq-worker-warning"><AlertTriangle size={16} /><p>Real-account trades use real funds. Confirm before starting on Real. This bot runs only while this page stays open; errors or account changes stop it.</p></div>
         <div className="gq-bot-actions">
-          <button className="gq-primary-button" type="button" onClick={() => void startBot()} disabled={startingBot || isBotRunning || !accountConnected || !config || !isConnected || !ws}><Play size={16} fill="currentColor" />{startingBot ? 'Saving session…' : `Start ${activeAccount?.account_type === 'real' ? 'real' : 'demo'} bot`}</button>
+          <button className="gq-primary-button" type="button" onClick={() => void startBot()} disabled={startingBot || isBotRunning || !accountConnected || !config || !isConnected || !ws || subscriptionBlocksBot}><Play size={16} fill="currentColor" />{startingBot ? 'Saving session…' : `Start ${activeAccount?.account_type === 'real' ? 'real' : 'demo'} bot`}</button>
           <button className="gq-secondary-button" type="button" onClick={stopBotManually} disabled={!isBotRunning}><Pause size={16} />Stop</button>
         </div>
+        {subscriptionBlocksBot && <div className="gq-subscription-gate"><p role={subscriptionError ? 'alert' : 'status'}>{subscriptionMessage}</p><button className="gq-secondary-button" type="button" onClick={onSubscribe}>View subscription</button></div>}
         {(botMessage || configurationError || (!config && !configurationError)) && <p className="gq-footnote" role={configurationError ? 'alert' : 'status'}>{configurationError || botMessage || 'Save bot settings before starting.'}</p>}
         {trading.error && <p className="gq-inline-error" role="alert">{trading.error}</p>}
         {!accountConnected && <p className="gq-footnote">Connect a Deriv account to enable automation.</p>}

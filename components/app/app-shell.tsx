@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { House, LoaderCircle, LogOut, MessageCircle, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { CreditCard, House, LoaderCircle, LogOut, MessageCircle, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { DerivWSProvider } from '@/components/custom/deriv-ws-provider';
 import { useAppSession } from './app-session';
 import { AuthScreen } from './auth-screen';
@@ -9,11 +9,13 @@ import { ConfigureScreen } from './configure-screen';
 import { HomeDashboard } from './home-dashboard';
 import { ProfileScreen } from './profile-screen';
 import { ChatScreen } from './chat-screen';
+import { SubscriptionScreen } from './subscription-screen';
 
-type AppTab = 'home' | 'configure' | 'chat' | 'profile';
+type AppTab = 'home' | 'configure' | 'subscription' | 'chat' | 'profile';
 const NAV_ITEMS: { id: AppTab; label: string; href: string; icon: typeof House }[] = [
   { id: 'home', label: 'Home', href: '/', icon: House },
   { id: 'configure', label: 'Configure', href: '/?tab=configure', icon: SlidersHorizontal },
+  { id: 'subscription', label: 'Subscribe', href: '/?tab=subscription', icon: CreditCard },
   { id: 'chat', label: 'Chat', href: '/?tab=chat', icon: MessageCircle },
   { id: 'profile', label: 'Profile', href: '/?tab=profile', icon: UserRound },
 ];
@@ -22,7 +24,7 @@ const APP_NAME = process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'G-squad';
 function initialTab(): AppTab {
   if (typeof window === 'undefined') return 'home';
   const tab = new URLSearchParams(window.location.search).get('tab');
-  return tab === 'configure' || tab === 'chat' || tab === 'profile' ? tab : 'home';
+  return tab === 'configure' || tab === 'subscription' || tab === 'chat' || tab === 'profile' ? tab : 'home';
 }
 
 export function AppShell() {
@@ -73,9 +75,10 @@ export function AppShell() {
       <DerivWSProvider>
         <main className={`gq-main ${tab === 'chat' ? 'gq-main-chat' : ''}`}>
           <div className="gq-tab-panel" hidden={tab !== 'home'}>
-            <HomeDashboard />
+            <HomeDashboard onSubscribe={() => navigate('subscription')} />
           </div>
           {tab === 'configure' && <ConfigureScreen onNotice={setNotice} />}
+          {tab === 'subscription' && <SubscriptionScreen />}
           {tab === 'chat' && <ChatScreen />}
           {tab === 'profile' && <ProfileScreen onNotice={setNotice} />}
         </main>
