@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentAppUser } from '@/lib/server/app-auth';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
-import { FIXED_TRADING_SYMBOL } from '@/lib/trading-constants';
+import { FIXED_TRADING_DURATION, FIXED_TRADING_SYMBOL } from '@/lib/trading-constants';
 
 export const runtime = 'nodejs';
 
@@ -23,7 +23,6 @@ function validateConfig(value: unknown): TradingConfig | null {
   const stake = raw.stake;
   const targetProfit = raw.targetProfit;
   const targetLoss = raw.targetLoss;
-  const duration = raw.duration;
   const maxTrades = raw.maxTrades;
   const maxConsecutiveLosses = raw.maxConsecutiveLosses;
   const cooldownMinutes = raw.cooldownMinutes;
@@ -31,7 +30,6 @@ function validateConfig(value: unknown): TradingConfig | null {
     typeof stake !== 'number' || !Number.isFinite(stake) ||
     typeof targetProfit !== 'number' || !Number.isFinite(targetProfit) ||
     typeof targetLoss !== 'number' || !Number.isFinite(targetLoss) ||
-    typeof duration !== 'number' || !Number.isFinite(duration) ||
     typeof maxTrades !== 'number' || !Number.isFinite(maxTrades) ||
     typeof maxConsecutiveLosses !== 'number' || !Number.isFinite(maxConsecutiveLosses) ||
     typeof cooldownMinutes !== 'number' || !Number.isFinite(cooldownMinutes)
@@ -39,19 +37,16 @@ function validateConfig(value: unknown): TradingConfig | null {
   if (!(stake > 0 && stake <= 10000)) return null;
   if (!(targetProfit > 0 && targetProfit <= 1_000_000)) return null;
   if (!(targetLoss > 0 && targetLoss <= 1_000_000)) return null;
-  if (!Number.isInteger(duration) || !(duration >= 1 && duration <= 10_000)) return null;
   if (!Number.isInteger(maxTrades) || !(maxTrades >= 1 && maxTrades <= 500)) return null;
   if (!Number.isInteger(maxConsecutiveLosses) || !(maxConsecutiveLosses >= 1 && maxConsecutiveLosses <= 50)) return null;
   if (!Number.isInteger(cooldownMinutes) || !(cooldownMinutes >= 0 && cooldownMinutes <= 1440)) return null;
-  if (!['t', 's', 'm'].includes(String(raw.durationUnit))) return null;
-
   return {
     stake,
     targetProfit,
     targetLoss,
     symbol: FIXED_TRADING_SYMBOL,
-    duration,
-    durationUnit: raw.durationUnit as TradingConfig['durationUnit'],
+    duration: FIXED_TRADING_DURATION,
+    durationUnit: 't',
     maxTrades,
     maxConsecutiveLosses,
     cooldownMinutes,
@@ -71,7 +66,9 @@ export async function GET() {
       ? Object.fromEntries(Object.entries(config as Record<string, unknown>).filter(([key]) => key !== 'strategy'))
       : {};
     return NextResponse.json({
-      config: config && typeof config === 'object' ? { ...savedConfig, symbol: FIXED_TRADING_SYMBOL } : null,
+      config: config && typeof config === 'object'
+        ? { ...savedConfig, symbol: FIXED_TRADING_SYMBOL, duration: FIXED_TRADING_DURATION, durationUnit: 't' }
+        : null,
     });
   } catch (error) {
     console.error('Trading configuration lookup failed:', error instanceof Error ? error.message : 'Unknown error');

@@ -6,7 +6,7 @@ import { useTicks } from '@deriv/core';
 import type { BuyResponse, ProposalResponse } from '@deriv/core';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { useBaseTrading } from '@/hooks/use-base-trading';
-import { FIXED_TRADING_SYMBOL, FIXED_TRADING_SYMBOL_NAME } from '@/lib/trading-constants';
+import { FIXED_TRADING_DURATION, FIXED_TRADING_SYMBOL, FIXED_TRADING_SYMBOL_NAME } from '@/lib/trading-constants';
 
 interface ConsoleEntry {
   id: number;
@@ -27,8 +27,6 @@ interface TradingConfig {
   targetProfit: number;
   targetLoss: number;
   symbol: string;
-  duration: number;
-  durationUnit: 't' | 's' | 'm';
   maxTrades: number;
   maxConsecutiveLosses: number;
   cooldownMinutes: number;
@@ -49,14 +47,15 @@ function findCandidate(prices: number[]): 'CALL' | 'PUT' | null {
   if (prices.length < 21) return null;
   const history = prices.slice(-21, -1);
   const current = prices[prices.length - 1];
+  const momentum = current - prices[prices.length - 4];
   const moves = history.slice(1).map((price, index) => Math.abs(price - history[index]));
   const volatility = moves.reduce((sum, move) => sum + move, 0) / moves.length;
   if (!Number.isFinite(volatility) || volatility <= 0) return null;
   const high = Math.max(...history);
   const low = Math.min(...history);
   const threshold = volatility * 1.5;
-  if (current > high + threshold) return 'CALL';
-  if (current < low - threshold) return 'PUT';
+  if (current > high + threshold && momentum > 0) return 'CALL';
+  if (current < low - threshold && momentum < 0) return 'PUT';
   return null;
 }
 
@@ -81,6 +80,7 @@ export function HomeDashboard() {
   const lastCandidateRef = useRef<'CALL' | 'PUT' | null>(null);
   const tradeCountRef = useRef(0);
   const consecutiveLossesRef = useRef(0);
+  const previousTradeStakeRef = useRef(0);
   const lastTradeAtRef = useRef(0);
   const activeBotContractRef = useRef<number | null>(null);
   const startingBalanceRef = useRef<number | null>(null);
@@ -186,11 +186,13 @@ export function HomeDashboard() {
     if (!Number.isFinite(profit)) return;
     if (profit < 0) {
       consecutiveLossesRef.current += 1;
+      previousTradeStakeRef.current = Math.round(previousTradeStakeRef.current * 1.5 * 100) / 100;
       setBotSession((current) => current && current.accountId === botAccountIdRef.current
         ? { ...current, losses: current.losses + 1 }
         : current);
     } else if (profit > 0) {
       consecutiveLossesRef.current = 0;
+      previousTradeStakeRef.current = config?.stake ?? previousTradeStakeRef.current;
       setBotSession((current) => current && current.accountId === botAccountIdRef.current
         ? { ...current, wins: current.wins + 1 }
         : current);
@@ -198,7 +200,7 @@ export function HomeDashboard() {
     if (botRunningRef.current && consecutiveLossesRef.current >= (config?.maxConsecutiveLosses ?? Infinity)) {
       stopBot('Bot stopped after reaching the consecutive-loss limit.');
     }
-  }, [isBotRunning, trading.closedPositions, config?.maxConsecutiveLosses, stopBot]);
+  }, [isBotRunning, trading.closedPositions, config?.stake, config?.maxConsecutiveLosses, stopBot]);
 
   useEffect(() => {
     if (!isBotRunning || !config || !accountConnected || !ws || !isConnected) return;
@@ -234,15 +236,33 @@ export function HomeDashboard() {
         }
         if (Date.now() - lastTradeAtRef.current < config.cooldownMinutes * 60_000) return;
 
+        const balance = Number(account.balance);
+        const startingBalance = startingBalanceRef.current;
+        if (!Number.isFinite(balance) || startingBalance === null) {
+          stopBot('Bot stopped because the selected account balance could not be verified.');
+          return;
+        }
+        const remainingLossBudget = config.targetLoss - Math.max(0, startingBalance - balance);
+        const requestedStake = previousTradeStakeRef.current || config.stake;
+        const stake = Math.round(Math.min(requestedStake, balance, remainingLossBudget, 10_000) * 100) / 100;
+        if (stake < 0.01) {
+          stopBot('Bot stopped because the remaining loss limit cannot cover the next trade stake.');
+          return;
+        }
+        if (stake < requestedStake) {
+          stopBot('Bot stopped because the next multiplied stake would exceed the remaining loss limit or account balance.');
+          return;
+        }
+
         const proposalResponse = await connection.ws.send<ProposalResponse>({
           proposal: 1,
-          amount: config.stake,
+          amount: stake,
           basis: 'stake',
           contract_type: direction,
           currency: account.currency,
           underlying_symbol: config.symbol,
-          duration: config.duration,
-          duration_unit: config.durationUnit,
+          duration: FIXED_TRADING_DURATION,
+          duration_unit: 't',
         });
         const proposal = proposalResponse.proposal;
         if (!proposal?.id || !Number.isFinite(proposal.ask_price) || proposal.ask_price <= 0) {
@@ -262,8 +282,8 @@ export function HomeDashboard() {
           currentOpenPositionsRef.current.some((position) => position.status === 'open' && position.underlying_symbol === FIXED_TRADING_SYMBOL)
         ) return;
         if (activeBotContractRef.current !== null) return;
-        if (config.stake > Number(latestAccount.balance)) {
-          stopBot('Bot stopped because the configured stake exceeds the selected account balance.');
+        if (stake > Number(latestAccount.balance)) {
+          stopBot('Bot stopped because the next stake exceeds the selected account balance.');
           return;
         }
 
@@ -273,9 +293,10 @@ export function HomeDashboard() {
         });
         if (!buyResponse.buy?.contract_id) throw new Error('Deriv did not confirm the trade.');
         activeBotContractRef.current = buyResponse.buy.contract_id;
+        previousTradeStakeRef.current = stake;
         tradeCountRef.current += 1;
         lastTradeAtRef.current = Date.now();
-        addEntry('SUCCESS', `${account.account_type === 'real' ? 'Real' : 'Demo'} trade placed.`);
+        addEntry('SUCCESS', `${account.account_type === 'real' ? 'Real' : 'Demo'} ${direction} trade placed at ${money(stake, account.currency)} for ${FIXED_TRADING_DURATION} ticks.`);
         if (tradeCountRef.current >= config.maxTrades) stopBot('Bot stopped after reaching the maximum trade count.');
       } catch (error) {
         console.error('Automated trading stopped:', error instanceof Error ? error.message : 'Unknown error');
@@ -351,6 +372,7 @@ export function HomeDashboard() {
     lastCandidateRef.current = null;
     tradeCountRef.current = 0;
     consecutiveLossesRef.current = 0;
+    previousTradeStakeRef.current = config.stake;
     lastTradeAtRef.current = 0;
     startingBalanceRef.current = Number(activeAccount.balance);
     botAccountIdRef.current = activeAccount.account_id;
