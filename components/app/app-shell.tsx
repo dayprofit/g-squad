@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { House, LoaderCircle, LogOut, MessageCircle, SlidersHorizontal, UserRound } from 'lucide-react';
+import { House, LoaderCircle, LogOut, MessageCircle, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
 import { DerivWSProvider } from '@/components/custom/deriv-ws-provider';
 import { useAppSession } from './app-session';
 import { AuthScreen } from './auth-screen';
@@ -67,7 +67,7 @@ export function AppShell() {
     <div className="gq-app-viewport">
       <header className="gq-header">
         <div className="gq-brand-lockup"><img className="gq-brand-logo" src="/logo.png" alt="" /><span>{APP_NAME}</span></div>
-        <div className="gq-header-actions"><button className="gq-avatar" type="button" aria-label="Open profile" onClick={() => navigate('profile')}>{initials}</button><button className="gq-icon-button" type="button" aria-label="Log out of G-squad" title="Log out of G-squad" onClick={() => void logoutApplication()}><LogOut size={18} /></button></div>
+        <div className="gq-header-actions">{user.isAdmin && <a className="gq-admin-link" href="/admin"><ShieldCheck size={16} />Admin</a>}<button className="gq-avatar" type="button" aria-label="Open profile" onClick={() => navigate('profile')}>{initials}</button><button className="gq-icon-button" type="button" aria-label="Log out of G-squad" title="Log out of G-squad" onClick={() => void logoutApplication()}><LogOut size={18} /></button></div>
       </header>
       <DerivWSProvider>
         <main className="gq-main">

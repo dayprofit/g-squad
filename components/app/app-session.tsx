@@ -8,6 +8,8 @@ export interface AppUser {
   fullName: string;
   email: string;
   joinedAt: string;
+  isAdmin: boolean;
+  adminRole: string | null;
 }
 
 interface AppSessionValue {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { AppEmailConflictError, createAppSession, createAppUser, APP_SESSION_COOKIE } from '@/lib/server/app-auth';
+import { AppEmailConflictError, createAppSession, createAppUser, isAdminEmail, recordAppUserActivity, APP_SESSION_COOKIE } from '@/lib/server/app-auth';
 
 export const runtime = 'nodejs';
 
@@ -12,11 +12,19 @@ export async function POST(request: Request) {
     if (fullName.length < 2 || fullName.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: 'Enter a valid name and email address.' }, { status: 400 });
     }
+    if (isAdminEmail(email)) {
+      return NextResponse.json({ error: 'This email is reserved for administrator access.' }, { status: 403 });
+    }
     if (password.length < 10 || password.length > 128) {
       return NextResponse.json({ error: 'Password must be between 10 and 128 characters.' }, { status: 400 });
     }
 
     const user = await createAppUser({ fullName, email, password });
+    await recordAppUserActivity({
+      actorUserId: user.id,
+      subjectUserId: user.id,
+      eventType: 'user.registered',
+    });
     const token = await createAppSession(user.id);
     const response = NextResponse.json({ user }, { status: 201 });
     response.cookies.set(APP_SESSION_COOKIE, token, {

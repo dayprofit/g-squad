@@ -13,9 +13,14 @@ Mobile-first trading workspace for a user's application account and Deriv accoun
 Create `.env.local` with the server-only Neon connection string, encryption key, and Deriv application settings:
 
 ```env
+APP_BASE_URL=https://your-public-app.example
 DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 # Generate with: openssl rand -base64 32
 DERIV_TOKEN_ENCRYPTION_KEY=
+# Generate a separate key with: openssl rand -base64 32
+ADMIN_MFA_ENCRYPTION_KEY=
+# Comma-separated server-only admin email allowlist
+ADMIN_EMAILS=admin@example.com
 
 NEXT_PUBLIC_DERIV_APP_ID=your-registered-app-id
 NEXT_PUBLIC_DERIV_REDIRECT_URI=http://localhost:3000
@@ -31,8 +36,23 @@ The app creates its Postgres tables and indexes automatically when first used:
 - `app_users`
 - `app_sessions`
 - `deriv_oauth_flows`
+- `app_user_activity`
 
 Application passwords are stored as scrypt hashes. Login sessions use random opaque tokens stored only as SHA-256 hashes in Postgres and sent to the browser in HTTP-only, SameSite cookies. Deriv access and refresh tokens are AES-GCM encrypted in Postgres and are never written to browser storage.
+
+### Admin workspace
+
+Set `ADMIN_EMAILS` to a comma-separated list of trusted existing account email addresses in the server environment. Create each trusted account before adding its email to the allowlist; public registration rejects allowlisted addresses. Emails are matched case-insensitively; never use a `NEXT_PUBLIC_` prefix. This list bootstraps Owner access. Sign in with an allowlisted account, then open `/admin`.
+
+Set `APP_BASE_URL` to the app's trusted public HTTPS origin (use `http://localhost:3000` locally). It is used to build staff invitation and password reset URLs; links are never generated from the incoming Host header. Generate `ADMIN_MFA_ENCRYPTION_KEY` independently with `openssl rand -base64 32`. It encrypts TOTP authenticator secrets at rest. Admins must enroll in a standard TOTP authenticator app, and each enrollment provides single-use recovery codes. Keep the encryption key safe and available during deployments; losing it prevents authenticator-secret decryption. Admin API requests require MFA, and sensitive changes additionally require password plus a fresh authenticator or backup code (five-minute reauthentication window). MFA and account login verification are rate-limited.
+
+The Owner can invite a registered app account to one of three least-privilege roles: **Support** (read accounts/activity, revoke app sessions, suspend/restore); **Account manager** (create/update users, change risk settings, and issue one-time reset links); and **Read-only** (view permitted accounts, activity, health, and aggregate analytics). Permissions are checked in server route handlers, not only hidden in the UI. Invitations are single-use, expire after seven days, and bind to the invited email. Since no email-delivery service is configured, copy the generated invitation URL and share it through a trusted channel. Owners are bootstrapped from the server-only `ADMIN_EMAILS` setting. This allowlist does not bypass MFA; keep Owner recovery codes protected and consider maintaining two trusted Owners.
+
+The responsive admin workspace includes staff and role management, account search and pagination, audit filters, account details, session revocation, confirmed bulk suspend/restore, service health, aggregate usage analytics, operational alerts, and bot configuration change history. Admins can create app accounts with one-time password-setup links; passwords are never shown or directly set by an administrator. Reset links expire after one hour and work once. Owners can reset another administrator's MFA enrollment; keep at least two protected Owners where possible and store each Owner's recovery codes securely.
+
+Audit entries record the actor, affected account, event, and safe before/after configuration values where applicable. Passwords, reset tokens, authenticator secrets, recovery codes, Deriv tokens, and trade controls are not exposed in the admin UI or audit details. Admins can see only whether a user has connected Deriv; they cannot read Deriv credentials, impersonate users, or place trades. Trading settings are risk configuration only, not a promise of results.
+
+All administrator mutations show a transparent full-screen progress layer for at least two seconds and keep it visible while the server is still processing the action.
 
 ## Run
 
