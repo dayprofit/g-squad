@@ -4,6 +4,8 @@ import { useState, type FormEvent } from 'react';
 import { Eye, EyeOff, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useAppSession } from './app-session';
 
+const APP_NAME = process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'G-squad';
+
 export function AuthScreen() {
   const { login, register } = useAppSession();
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -36,7 +38,7 @@ export function AuthScreen() {
   return (
     <main className="gq-auth-screen">
       <section className="gq-auth-panel">
-        <div className="gq-brand-lockup"><img className="gq-brand-logo" src="/logo.png" alt="G-squad logo" /><span>G-SQUAD</span></div>
+        <div className="gq-brand-lockup"><img className="gq-brand-logo" src="/logo.png" alt={`${APP_NAME} logo`} /><span>{APP_NAME}</span></div>
         <p className="gq-eyebrow">PRIVATE TRADING WORKSPACE</p>
         <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
         <p className="gq-auth-copy">{mode === 'login' ? 'Sign in to manage your trading workspace.' : 'Your application account is separate from your Deriv account.'}</p>

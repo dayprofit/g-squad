@@ -222,8 +222,11 @@ button { color: inherit; }
 .gq-auth-switch button { border: 0; background: transparent; color: #715b00; font-weight: 750; cursor: pointer; }
 .gq-security-note { justify-content: center; gap: 6px; color: #899086; font-size: 10px; }
 .gq-security-note svg { color: #53795f; }
-.gq-loading-screen { background: var(--gq-canvas); }
+.gq-loading-screen { align-content: center; justify-items: center; gap: 15px; background: var(--gq-canvas); }
 .gq-loading-ring { display: grid; width: 52px; height: 52px; place-items: center; border: 1px solid #eee3aa; border-radius: 50%; background: white; color: #8c7100; }
+.gq-splash-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 8px; font-size: 17px; font-weight: 800; letter-spacing: 1.2px; }
+.gq-splash-brand img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; }
+.gq-splash-caption { color: var(--gq-muted); font-size: 11px; }
 .gq-loading-overlay { position: fixed; z-index: 30; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: rgb(248 249 246 / 83%); backdrop-filter: blur(3px); }
 .gq-loading-overlay strong { font-size: 14px; }
 .gq-loading-overlay > span:last-child { color: var(--gq-muted); font-size: 11px; }
