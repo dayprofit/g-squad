@@ -20,17 +20,16 @@ export async function GET() {
     const chat = chats[0];
     if (!chat) throw new Error('Chat thread was not created.');
     const chatId = String(chat.id);
-    const [messages, typing, preferences] = await Promise.all([
+    const [messages, typing] = await Promise.all([
       sql`SELECT id::text AS id, sender_type AS "senderType", sender_name AS "senderName",
         message, created_at::text AS "createdAt"
         FROM (SELECT id, sender_type, sender_name, message, created_at
           FROM admin_chat_messages WHERE chat_id = ${chatId}::bigint
           ORDER BY id DESC LIMIT 200) recent ORDER BY id` as Promise<Record<string, unknown>[]>,
-      sql`SELECT u.full_name AS "fullName", t.expires_at::text AS "expiresAt"
+      sql`SELECT u.full_name AS "fullName"
         FROM admin_chat_typing t JOIN app_users u ON u.id = t.user_id
         WHERE t.chat_id = ${chatId}::bigint AND t.user_id <> ${user.id}::uuid
           AND t.is_typing = true AND t.expires_at > now() LIMIT 1` as Promise<Record<string, unknown>[]>,
-      sql`SELECT chat_sound_enabled AS "soundEnabled" FROM app_users WHERE id = ${user.id}::uuid` as Promise<Record<string, unknown>[]>,
     ]);
     return NextResponse.json({
       chat: { id: chatId, status: String(chat.status), updatedAt: String(chat.updatedAt) },
@@ -39,7 +38,6 @@ export async function GET() {
         message: String(row.message), createdAt: String(row.createdAt),
       })),
       typing: typing[0] ? String(typing[0].fullName) : null,
-      soundEnabled: preferences[0]?.soundEnabled !== false,
     });
   } catch (error) {
     console.error('Investor chat lookup failed:', error instanceof Error ? error.message : 'Unknown error');
@@ -67,13 +65,6 @@ export async function POST(request: Request) {
     const chatId = String(chats[0]?.id ?? '');
     if (!chatId) throw new Error('Chat thread was not found.');
 
-    if (body.action === 'preferences') {
-      if (typeof body.soundEnabled !== 'boolean') {
-        return NextResponse.json({ error: 'Sound preference must be enabled or disabled.' }, { status: 400 });
-      }
-      await sql`UPDATE app_users SET chat_sound_enabled = ${body.soundEnabled} WHERE id = ${user.id}::uuid`;
-      return NextResponse.json({ soundEnabled: body.soundEnabled });
-    }
     if (body.action === 'typing') {
       const isTyping = body.isTyping === true;
       await sql`INSERT INTO admin_chat_typing (chat_id, user_id, is_typing, expires_at)

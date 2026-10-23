@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { Bell, BellOff, LoaderCircle, MessageCircle, Send, Volume2 } from 'lucide-react';
-import { playChatNotificationSound } from '@/components/chat/chat-notification-sound';
+import { Bell, LoaderCircle, MessageCircle, Send } from 'lucide-react';
+import { playChatNotificationSound, unlockChatNotificationSound } from '@/components/chat/chat-notification-sound';
 
 interface ChatMessage {
   id: string;
@@ -16,7 +16,6 @@ interface ChatData {
   chat: { id: string; status: string; updatedAt: string };
   messages: ChatMessage[];
   typing: string | null;
-  soundEnabled: boolean;
 }
 
 async function chatRequest(url: string, init?: RequestInit) {
@@ -32,7 +31,6 @@ export function ChatScreen() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const lastMessageId = useRef('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<number | null>(null);
@@ -44,15 +42,13 @@ export function ChatScreen() {
     try {
       const result = await chatRequest('/api/chat') as ChatData;
       const latestMessage = result.messages.at(-1);
-      if (lastMessageId.current && latestMessage?.senderType === 'staff' && latestMessage.id !== lastMessageId.current &&
-        result.soundEnabled && soundEnabled) {
+      if (lastMessageId.current && latestMessage?.senderType === 'staff' && latestMessage.id !== lastMessageId.current) {
         void playChatNotificationSound().catch((reason: unknown) => {
           console.warn('Chat notification sound could not play:', reason instanceof Error ? reason.message : 'Unsupported browser audio');
         });
       }
       if (latestMessage) lastMessageId.current = latestMessage.id;
       setData(result);
-      setSoundEnabled(result.soundEnabled);
       setError('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not load your support chat.');
@@ -60,13 +56,17 @@ export function ChatScreen() {
       requestInFlight.current = false;
       setLoading(false);
     }
-  }, [soundEnabled]);
+  }, []);
 
   useEffect(() => {
+    document.addEventListener('pointerdown', unlockChatNotificationSound, { passive: true });
+    document.addEventListener('keydown', unlockChatNotificationSound);
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => {
       window.clearInterval(timer);
+      document.removeEventListener('pointerdown', unlockChatNotificationSound);
+      document.removeEventListener('keydown', unlockChatNotificationSound);
       if (typingTimer.current !== null) window.clearTimeout(typingTimer.current);
     };
   }, [refresh]);
@@ -123,28 +123,10 @@ export function ChatScreen() {
     }
   }
 
-  async function toggleSound() {
-    const next = !soundEnabled;
-    try {
-      if (next) await playChatNotificationSound();
-      await chatRequest('/api/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'preferences', soundEnabled: next }),
-      });
-      setSoundEnabled(next);
-      setError('');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not update notification sound.');
-    }
-  }
-
   return (
     <section className="gq-chat-page" aria-label="Investor support chat">
       <div className="gq-chat-topline">
         <div className="gq-chat-title"><span className="gq-chat-symbol"><MessageCircle size={20} /></span><div><p className="gq-eyebrow">INVESTOR SUPPORT</p><h1>Chat with our team</h1></div></div>
-        <button className="gq-chat-sound" type="button" onClick={() => void toggleSound()} aria-label={soundEnabled ? 'Mute chat notifications' : 'Enable chat notifications'} title={soundEnabled ? 'Mute sound notifications' : 'Enable sound notifications'}>
-          {soundEnabled ? <Volume2 size={17} /> : <BellOff size={17} />}<span>{soundEnabled ? 'Sound on' : 'Muted'}</span>
-        </button>
       </div>
       <div className="gq-chat-status">
         <span className="gq-chat-status-dot" />

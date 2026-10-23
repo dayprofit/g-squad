@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { Bell, BellOff, LoaderCircle, MessageCircle, Send, Volume2 } from 'lucide-react';
-import { playChatNotificationSound } from '@/components/chat/chat-notification-sound';
+import { MessageCircle, LoaderCircle, Send } from 'lucide-react';
+import { playChatNotificationSound, unlockChatNotificationSound } from '@/components/chat/chat-notification-sound';
 
 interface ChatMessage {
   id: string;
@@ -54,7 +54,6 @@ export function AdminChatWorkspace({ adminRequest, onError, onNotice }: {
   const [draft, setDraft] = useState('');
   const [department, setDepartment] = useState('support');
   const [assignedTo, setAssignedTo] = useState('');
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -73,7 +72,7 @@ export function AdminChatWorkspace({ adminRequest, onError, onNotice }: {
       const hasNewInvestorMessage = result.chats.some((chat) =>
         chat.lastSenderType === 'investor' && chat.lastMessageId &&
         lastMessageIds.current.get(chat.id) !== chat.lastMessageId);
-      if (inboxInitialized.current && hasNewInvestorMessage && soundEnabled) {
+      if (inboxInitialized.current && hasNewInvestorMessage) {
         void playChatNotificationSound().catch((reason: unknown) => {
           console.warn('Chat notification sound could not play:', reason instanceof Error ? reason.message : 'Unsupported browser audio');
         });
@@ -91,24 +90,17 @@ export function AdminChatWorkspace({ adminRequest, onError, onNotice }: {
       requestInFlight.current = false;
       setLoading(false);
     }
-  }, [adminRequest, onError, selectedId, soundEnabled]);
+  }, [adminRequest, onError, selectedId]);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem('g-squad-admin-chat-sound');
-      if (saved !== null) setSoundEnabled(saved === 'true');
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : 'Could not load notification preferences.';
-      setLocalError(message);
-      onError(message);
-    }
-  }, [onError]);
-
-  useEffect(() => {
+    document.addEventListener('pointerdown', unlockChatNotificationSound, { passive: true });
+    document.addEventListener('keydown', unlockChatNotificationSound);
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => {
       window.clearInterval(timer);
+      document.removeEventListener('pointerdown', unlockChatNotificationSound);
+      document.removeEventListener('keydown', unlockChatNotificationSound);
       if (typingTimer.current !== null) window.clearTimeout(typingTimer.current);
     };
   }, [refresh]);
@@ -205,27 +197,13 @@ export function AdminChatWorkspace({ adminRequest, onError, onNotice }: {
     }
   }
 
-  async function toggleSound() {
-    const next = !soundEnabled;
-    try {
-      if (next) await playChatNotificationSound();
-      window.localStorage.setItem('g-squad-admin-chat-sound', String(next));
-      setSoundEnabled(next);
-      setLocalError('');
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : 'Could not enable notification sound.';
-      setLocalError(message);
-      onError(message);
-    }
-  }
-
   const departmentPeople = inbox.directory.filter((person) =>
     person.role === 'owner' || person.department === department);
 
   return (
     <section className="gq-admin-chat-workspace">
       <aside className="gq-admin-chat-list">
-        <div className="gq-admin-chat-list-heading"><div><h2>Conversations</h2><p>{inbox.chats.length} active and recent</p></div><button type="button" onClick={() => void toggleSound()} aria-label={soundEnabled ? 'Mute chat notifications' : 'Enable chat notifications'} title={soundEnabled ? 'Mute sound notifications' : 'Enable sound notifications'}>{soundEnabled ? <Volume2 size={17} /> : <BellOff size={17} />}</button></div>
+        <div className="gq-admin-chat-list-heading"><div><h2>Conversations</h2><p>{inbox.chats.length} active and recent</p></div></div>
         {loading && !inbox.chats.length ? <div className="gq-chat-loading"><LoaderCircle className="gq-spin" size={18} />Loading inbox…</div> :
           inbox.chats.length ? inbox.chats.map((chat) => (
             <button type="button" key={chat.id} className={`gq-admin-chat-list-item ${selectedId === chat.id ? 'is-selected' : ''}`} onClick={() => setSelectedId(chat.id)}>

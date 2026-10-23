@@ -40,7 +40,6 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS admin_totp_pending_secret TEXT`;
     await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS admin_totp_last_step BIGINT`;
     await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS admin_totp_backup_codes JSONB NOT NULL DEFAULT '[]'::jsonb`;
-    await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS chat_sound_enabled BOOLEAN NOT NULL DEFAULT true`;
     await sql`CREATE TABLE IF NOT EXISTS app_sessions (
       session_id UUID NOT NULL DEFAULT gen_random_uuid(),
       token_hash TEXT PRIMARY KEY,

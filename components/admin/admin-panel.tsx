@@ -462,7 +462,7 @@ export function AdminPanel() {
       </button>
       {mobileMenuOpen && <button className="gq-admin-backdrop" type="button" aria-label="Close admin menu" onClick={() => setMobileMenuOpen(false)} />}
       <aside className={`gq-admin-sidebar ${mobileMenuOpen ? 'is-open' : ''}`}>
-        <div className="gq-admin-brand"><span className="gq-admin-brand-icon"><ShieldCheck size={20} /></span><div><strong>G-squad</strong><span>Admin workspace</span></div></div>
+        <div className="gq-admin-brand"><img src="/logo.png" alt="" /><div><strong>G-squad</strong><span>Admin workspace</span></div></div>
         <p className="gq-admin-nav-label">MANAGEMENT</p>
         <nav className="gq-admin-nav" aria-label="Admin navigation">
           {canViewOverview && nav('overview', 'Overview', BarChart3)}
@@ -476,11 +476,11 @@ export function AdminPanel() {
           {isOwner && nav('settings', 'Settings', Settings2)}
         </nav>
         <div className="gq-admin-sidebar-bottom">
-          <div className="gq-admin-identity"><span><CircleUserRound size={18} /></span><div><strong>{user.fullName}</strong><small>{user.email}</small></div></div>
+          <div className="gq-admin-identity"><span><CircleUserRound size={18} /></span><div><strong>{user.fullName}</strong><small>{user.email}</small><em className="gq-admin-sidebar-role">{(user.adminRole ?? 'Staff').replace('_', ' ')}</em></div></div>
           <a href="/"><ArrowLeft size={16} />Back to app</a>
         </div>
       </aside>
-      <section className="gq-admin-content">
+      <section className={`gq-admin-content ${activeView === 'chats' ? 'gq-admin-content-chat' : ''}`}>
         <header className="gq-admin-topbar">
           <div><p className="gq-admin-eyebrow">G-SQUAD · ADMINISTRATION</p><h1>{viewTitle[activeView]}</h1></div>
           <div className="gq-admin-top-actions"><span className="gq-admin-role"><ShieldCheck size={15} />{(user.adminRole ?? 'Staff').replace('_', ' ')}</span><button type="button" onClick={() => void signOut()}><LockKeyhole size={15} />Sign out</button></div>
