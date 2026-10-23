@@ -1435,6 +1435,7 @@ function AdminSubscriptionSettings({ adminRequest, withOverlay, onError, onNotic
   const [duration, setDuration] = useState('30');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   const refresh = useCallback(async () => {
     const result = await adminRequest(() => fetch('/api/admin/subscriptions', { cache: 'no-store' }));
@@ -1490,6 +1491,21 @@ function AdminSubscriptionSettings({ adminRequest, withOverlay, onError, onNotic
     });
   }
 
+  async function scanPayments() {
+    setScanning(true);
+    await withOverlay('Checking blockchain subscription payments', async () => {
+      try {
+        const result = await adminRequest(() => fetch('/api/admin/subscriptions/scan', { method: 'POST' }));
+        onNotice(`Blockchain check complete: ${result.scannedWallets ?? 0} wallet(s) scanned, ${result.detectedTransfers ?? 0} new payment(s) confirmed, ${result.sweepsStarted ?? 0} treasury sweep(s) started${Number(result.scanErrors) ? `, ${result.scanErrors} wallet scan error(s)` : ''}.`);
+        await refresh();
+      } catch (reason) {
+        onError(reason instanceof Error ? reason.message : 'Could not check subscription payments.');
+      } finally {
+        setScanning(false);
+      }
+    });
+  }
+
   return <section className="gq-admin-card">
     <div className="gq-admin-card-heading">
       <div><h2>USDT subscriptions</h2><p>Configure bot access, the TRON Nile price, and payment monitoring.</p></div>
@@ -1514,6 +1530,12 @@ function AdminSubscriptionSettings({ adminRequest, withOverlay, onError, onNotic
       <small>Created {dateLabel(wallet.createdAt)} · last checked {dateLabel(wallet.lastCheckedAt)}</small>
     </article>)}</div> : <p className="gq-admin-empty">{loading ? 'Loading user wallets…' : 'No user deposit wallets have been generated.'}</p>}
     <div className="gq-admin-card-heading gq-admin-subscription-list-heading"><div><h2>Recent deposits</h2><p>Latest 300 on-chain payment records</p></div></div>
+    <div className="gq-admin-subscription-scan">
+      <p>Without a scheduled scanner, payments are checked only when an Owner runs this action. Confirmations are checked on TRON Nile; eligible payments activate access and queued deposits may be swept to the treasury.</p>
+      <button className="gq-admin-primary" type="button" disabled={loading || scanning || !data?.settings.enabled || !data?.contractConfigured} onClick={() => void scanPayments()}>
+        <RefreshCw size={14} className={scanning ? 'gq-spin' : ''} />{scanning ? 'Checking blockchain…' : 'Check blockchain now'}
+      </button>
+    </div>
     {data?.payments.length ? <div className="gq-admin-user-list">{data.payments.map((payment) => <article className="gq-admin-user" key={payment.id}>
       <div className="gq-admin-subscription-payment-head"><div><strong>{payment.userName}</strong><small>{payment.email}</small></div><span className={`gq-admin-status ${payment.status === 'successful' ? '' : 'is-suspended'}`}>{payment.status}</span></div>
       <p className="gq-admin-subscription-detail">{payment.amountUsdt} USDT received · expected {payment.expectedAmountUsdt} USDT · sweep {payment.sweepStatus.replace('_', ' ')}</p>

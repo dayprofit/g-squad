@@ -100,12 +100,12 @@ SUBSCRIPTION_WALLET_ENCRYPTION_KEY=
 TRON_USDT_CONTRACT_ADDRESS=
 # Optional TronGrid API key to improve authenticated API access/rate limits.
 TRON_GRID_API_KEY=
-# Required cron bearer secret. Vercel uses CRON_SECRET automatically.
-CRON_SECRET=
+# Required only when you configure an external scheduler for payment scans.
+SUBSCRIPTION_CRON_SECRET=
 ```
 
 Generate `SUBSCRIPTION_WALLET_ENCRYPTION_KEY` with `openssl rand -base64 32`. Store the output only in the deployment's server environment; never use a `NEXT_PUBLIC_` prefix or commit the key. Admin APIs and screens never return wallet private keys. The Owner's treasury address is created when subscriptions are enabled. The configured token address is checked on-chain for the `USDT` symbol and exactly six decimals when settings are saved and each scheduled payment scan runs.
 
-The included `vercel.json` schedules `/api/cron/subscriptions` every five minutes. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`; another host must schedule the same endpoint and send `Authorization: Bearer $SUBSCRIPTION_CRON_SECRET` (or `$CRON_SECRET`). The endpoint is not a background worker and deposits will not be checked unless the schedule is active. Scans process a bounded batch of user wallets each run. Keep the server available and monitor failed scans and sweep statuses.
+There is no Vercel Cron schedule in this repository. Vercel Hobby only supports daily cron jobs, while payment confirmation and treasury sweeps are expected to be checked more frequently. Without a scheduler, an Owner can click **Check blockchain now** in **Admin → Settings** to run a bounded on-demand scan; eligible confirmed payments activate access, and queued deposits may be swept to the treasury. This is not automatic in the background, so payments wait until an Owner runs a check. To automate checks, configure an external scheduler (or a Vercel plan that supports the required frequency) to call `/api/cron/subscriptions` every five minutes with `Authorization: Bearer $SUBSCRIPTION_CRON_SECRET`. Each run processes a bounded batch of wallets; monitor failed scans and sweep statuses.
 
 Automatic TRC-20 transfers require TRX fee resources in each user deposit wallet. On Nile, provide testnet TRX to deposit addresses as needed; `fee_required` sweeps retry after resources become available. Ambiguous or reverted sweep failures are marked for manual review and are not automatically resent, to avoid duplicate transfers. Monitor payment and sweep statuses under **Admin → Settings**. Test deposit confirmation and treasury sweeps with Nile funds before enabling the gate for users.

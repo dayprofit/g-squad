@@ -212,9 +212,17 @@ button { color: inherit; }
 .gq-admin-subscription-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 9px 0; }
 .gq-admin-subscription-links a { display: inline-flex; align-items: center; gap: 4px; color: #705b00; font-size: 9px; font-weight: 700; text-decoration: none; }
 .gq-admin-subscription-links .gq-admin-secondary { min-height: 28px; }
+.gq-admin-subscription-scan { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 11px; border: 1px solid #f1df9c; border-radius: 8px; background: #fff9e2; }
+.gq-admin-subscription-scan p { margin: 0; color: #695600; font-size: 10px; line-height: 1.5; }
+.gq-admin-subscription-scan button { flex: 0 0 auto; }
 
 @media (max-width: 900px) {
   .gq-subscription-admin-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 540px) {
+  .gq-admin-subscription-scan { align-items: stretch; flex-direction: column; }
+  .gq-admin-subscription-scan button { align-self: flex-start; }
 }
 
 .gq-config-form { display: flex; flex-direction: column; gap: 13px; }
