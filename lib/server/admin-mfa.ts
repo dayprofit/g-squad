@@ -2,12 +2,19 @@ import 'server-only';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getNeonSql } from './neon';
 
+export class AdminMfaConfigurationError extends Error {
+  constructor() {
+    super('Admin MFA setup is unavailable. Set ADMIN_MFA_ENCRYPTION_KEY to a valid base64-encoded 32-byte key in the server environment, then redeploy.');
+    this.name = 'AdminMfaConfigurationError';
+  }
+}
+
 function encryptionKey(): Buffer {
   const encoded = process.env.ADMIN_MFA_ENCRYPTION_KEY;
-  if (!encoded) throw new Error('Admin MFA is not configured. Set ADMIN_MFA_ENCRYPTION_KEY.');
+  if (!encoded) throw new AdminMfaConfigurationError();
   const key = Buffer.from(encoded, 'base64');
   if (key.length !== 32 || key.toString('base64').replace(/=+$/, '') !== encoded.replace(/=+$/, '')) {
-    throw new Error('ADMIN_MFA_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
+    throw new AdminMfaConfigurationError();
   }
   return key;
 }

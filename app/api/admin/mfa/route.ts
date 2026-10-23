@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentAppSession, isAdminEmail, recordAppUserActivity } from '@/lib/server/app-auth';
-import { consumeBackupCode, createBackupCodes, createTotpUri, decryptTotpSecret, encryptTotpSecret, createTotpSecret, verifyTotp } from '@/lib/server/admin-mfa';
+import { AdminMfaConfigurationError, consumeBackupCode, createBackupCodes, createTotpUri, decryptTotpSecret, encryptTotpSecret, createTotpSecret, verifyTotp } from '@/lib/server/admin-mfa';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 import { verifyPassword } from '@/lib/server/app-auth';
 
@@ -133,6 +133,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unsupported administrator security action.' }, { status: 400 });
   } catch (error) {
     console.error('Admin MFA action failed:', error instanceof Error ? error.message : 'Unknown error');
+    if (error instanceof AdminMfaConfigurationError) {
+      return NextResponse.json({ error: error.message, code: 'ADMIN_MFA_CONFIGURATION_REQUIRED' }, { status: 503 });
+    }
     return NextResponse.json({ error: 'Administrator security could not be updated.' }, { status: 503 });
   }
 }

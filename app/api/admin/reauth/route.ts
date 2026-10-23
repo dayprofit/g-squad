@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentAppSession, isAdminEmail, recordAppUserActivity, verifyPassword } from '@/lib/server/app-auth';
-import { consumeBackupCode, decryptTotpSecret, verifyTotp } from '@/lib/server/admin-mfa';
+import { AdminMfaConfigurationError, consumeBackupCode, decryptTotpSecret, verifyTotp } from '@/lib/server/admin-mfa';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 
 export const runtime = 'nodejs';
@@ -55,6 +55,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Admin reauthentication failed:', error instanceof Error ? error.message : 'Unknown error');
+    if (error instanceof AdminMfaConfigurationError) {
+      return NextResponse.json({ error: error.message, code: 'ADMIN_MFA_CONFIGURATION_REQUIRED' }, { status: 503 });
+    }
     return NextResponse.json({ error: 'Could not verify your identity.' }, { status: 503 });
   }
 }
