@@ -6,14 +6,14 @@ import { ensureDatabaseSchema, getNeonSql } from './neon';
 
 interface StoredDerivTokens {
   accessTokenEncrypted: string;
-  refreshTokenEncrypted: string;
+  refreshTokenEncrypted: string | null;
   expiresAt: number;
   scope: string;
 }
 
 interface TokenPayload {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
   expires_in: number;
   expires_at?: number;
   scope: string;
@@ -52,6 +52,10 @@ export function redirectUri(requestUrl: string): string {
   return process.env.NEXT_PUBLIC_DERIV_REDIRECT_URI || new URL(requestUrl).origin;
 }
 
+function requestedScopes(): string {
+  return process.env.NEXT_PUBLIC_DERIV_OAUTH_SCOPES?.split(',').map((scope) => scope.trim()).filter(Boolean).join(' ') || 'trade';
+}
+
 export async function createOAuthFlow(userId: string, callbackUrl: string, landingSearch = ''): Promise<string> {
   const state = randomBytes(32).toString('base64url');
   const verifier = randomBytes(32).toString('base64url');
@@ -67,7 +71,7 @@ export async function createOAuthFlow(userId: string, callbackUrl: string, landi
     client_id: clientId(),
     redirect_uri: redirectUri(callbackUrl),
     response_type: 'code',
-    scope: process.env.NEXT_PUBLIC_DERIV_OAUTH_SCOPES?.split(',').join(' ') || 'trade',
+    scope: requestedScopes(),
     state,
     code_challenge: challenge,
     code_challenge_method: 'S256',
@@ -117,20 +121,36 @@ async function exchangeCode(code: string, verifier: string, callbackUrl: string)
     body,
     cache: 'no-store',
   });
-  if (!response.ok) throw new Error(`Deriv authorization failed (${response.status}).`);
-  const payload = await response.json() as TokenPayload;
-  if (!payload.access_token || !payload.refresh_token || !payload.scope) throw new Error('Deriv returned an incomplete authorization response.');
-  if (!payload.scope.split(/\s+/).includes('trade')) throw new Error('Deriv authorization is missing the required trade permission.');
-  return payload;
+  if (!response.ok) throw new Error(`Deriv authorization failed (${response.status}). Restart the Deriv connection and verify the registered redirect URI.`);
+  const payload: unknown = await response.json();
+  if (!payload || typeof payload !== 'object') throw new Error('Deriv returned an invalid authorization response.');
+  const fields = payload as Record<string, unknown>;
+  if (typeof fields.access_token !== 'string' || !fields.access_token) {
+    throw new Error('Deriv did not return an access token. Check the Deriv app redirect URI and reconnect.');
+  }
+  const scope = typeof fields.scope === 'string' && fields.scope.trim()
+    ? fields.scope.trim()
+    : requestedScopes();
+  if (!scope.split(/\s+/).includes('trade')) throw new Error('Deriv authorization is missing the required trade permission.');
+  const refreshToken = typeof fields.refresh_token === 'string' && fields.refresh_token
+    ? fields.refresh_token
+    : undefined;
+  const expiresIn = typeof fields.expires_in === 'number' && Number.isFinite(fields.expires_in) && fields.expires_in > 0
+    ? fields.expires_in
+    : 3600;
+  const expiresAt = typeof fields.expires_at === 'number' && Number.isFinite(fields.expires_at)
+    ? fields.expires_at
+    : undefined;
+  return { access_token: fields.access_token, refresh_token: refreshToken, expires_in: expiresIn, expires_at: expiresAt, scope };
 }
 
 async function saveTokens(userId: string, payload: TokenPayload): Promise<void> {
   await ensureDatabaseSchema();
   await getNeonSql()`
     UPDATE app_users SET deriv_access_token = ${encrypt(payload.access_token)},
-      deriv_refresh_token = ${encrypt(payload.refresh_token)},
-      deriv_token_expires_at = ${payload.expires_at ?? Math.floor(Date.now() / 1000) + payload.expires_in},
-      deriv_scope = ${payload.scope}
+      deriv_refresh_token = ${payload.refresh_token ? encrypt(payload.refresh_token) : null},
+      deriv_token_expires_at = ${payload.expires_at ?? Math.floor(Date.now() / 1000) + (payload.expires_in ?? 3600)},
+      deriv_scope = ${payload.scope ?? requestedScopes()}
     WHERE id = ${userId}::uuid
   `;
 }
@@ -149,10 +169,10 @@ async function readTokens(userId: string): Promise<StoredDerivTokens | null> {
     FROM app_users WHERE id = ${userId}::uuid LIMIT 1
   ` as Record<string, unknown>[];
   const record = result[0];
-  if (!record?.accessToken || !record.refreshToken) return null;
+  if (!record?.accessToken) return null;
   return {
     accessTokenEncrypted: String(record.accessToken),
-    refreshTokenEncrypted: String(record.refreshToken),
+    refreshTokenEncrypted: record.refreshToken ? String(record.refreshToken) : null,
     expiresAt: Number(record.expiresAt),
     scope: String(record.scope),
   };
@@ -164,9 +184,20 @@ async function refreshTokens(userId: string, refreshToken: string): Promise<Toke
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, cache: 'no-store',
   });
   if (!response.ok) throw new Error('Deriv authorization expired. Reconnect the account.');
-  const payload = await response.json() as TokenPayload;
-  if (!payload.access_token || !payload.refresh_token || !payload.scope) throw new Error('Deriv token refresh response was incomplete.');
-  if (!payload.scope.split(/\s+/).includes('trade')) throw new Error('Deriv authorization lost the required trade permission.');
+  const raw: unknown = await response.json();
+  if (!raw || typeof raw !== 'object') throw new Error('Deriv returned an invalid token refresh response. Reconnect the account.');
+  const fields = raw as Record<string, unknown>;
+  if (typeof fields.access_token !== 'string' || !fields.access_token) throw new Error('Deriv did not return an access token during refresh. Reconnect the account.');
+  const scope = typeof fields.scope === 'string' && fields.scope.trim() ? fields.scope.trim() : requestedScopes();
+  if (!scope.split(/\s+/).includes('trade')) throw new Error('Deriv authorization lost the required trade permission.');
+  const payload: TokenPayload = {
+    access_token: fields.access_token,
+    refresh_token: typeof fields.refresh_token === 'string' && fields.refresh_token ? fields.refresh_token : undefined,
+    expires_in: typeof fields.expires_in === 'number' && Number.isFinite(fields.expires_in) && fields.expires_in > 0 ? fields.expires_in : 3600,
+    expires_at: typeof fields.expires_at === 'number' && Number.isFinite(fields.expires_at) ? fields.expires_at : undefined,
+    scope,
+  };
+  if (!payload.refresh_token) payload.refresh_token = refreshToken;
   await saveTokens(userId, payload);
   return payload;
 }
@@ -175,6 +206,7 @@ async function getAccessToken(userId: string): Promise<{ token: string; scope: s
   const stored = await readTokens(userId);
   if (!stored) return null;
   if (stored.expiresAt <= Math.floor(Date.now() / 1000) + 30) {
+    if (!stored.refreshTokenEncrypted) throw new Error('Deriv authorization expired. Reconnect the account.');
     const refreshed = await refreshTokens(userId, decrypt(stored.refreshTokenEncrypted));
     return { token: refreshed.access_token, scope: refreshed.scope };
   }
@@ -228,17 +260,6 @@ export async function loadDerivSession(userId: string): Promise<{ accounts: Deri
   if (!selected) return { accounts, activeAccountId: null, wsUrl: null };
   if (selected.account_id !== previousId) await saveActiveAccount(userId, selected.account_id);
   return { accounts, activeAccountId: selected.account_id, wsUrl: await getOTP(auth.token, selected.account_id) };
-}
-
-export async function requireActiveDemoAccount(userId: string): Promise<void> {
-  const auth = await getAccessToken(userId);
-  if (!auth) throw new Error('Connect a Deriv demo account first.');
-  const accountId = await getActiveAccountId(userId);
-  const accounts = await listAccounts(auth.token);
-  const selected = accounts.find((account) => account.account_id === accountId);
-  if (!selected || selected.account_type !== 'demo') {
-    throw new Error('Automated trading is restricted to a selected Deriv demo account.');
-  }
 }
 
 export async function switchDerivAccount(userId: string, accountId: string): Promise<{ accounts: DerivAccount[]; activeAccountId: string; wsUrl: string }> {

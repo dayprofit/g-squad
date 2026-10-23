@@ -1,17 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getCurrentAppUser } from '@/lib/server/app-auth';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
+import { FIXED_TRADING_SYMBOL } from '@/lib/trading-constants';
 
 export const runtime = 'nodejs';
-
-const STRATEGIES = ['breakout', 'reversal', 'both'] as const;
-const SYMBOLS = ['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'];
 
 interface TradingConfig {
   stake: number;
   targetProfit: number;
   targetLoss: number;
-  strategy: (typeof STRATEGIES)[number];
   symbol: string;
   duration: number;
   durationUnit: 't' | 's' | 'm';
@@ -46,11 +43,19 @@ function validateConfig(value: unknown): TradingConfig | null {
   if (!Number.isInteger(maxTrades) || !(maxTrades >= 1 && maxTrades <= 500)) return null;
   if (!Number.isInteger(maxConsecutiveLosses) || !(maxConsecutiveLosses >= 1 && maxConsecutiveLosses <= 50)) return null;
   if (!Number.isInteger(cooldownMinutes) || !(cooldownMinutes >= 0 && cooldownMinutes <= 1440)) return null;
-  if (!STRATEGIES.includes(raw.strategy as (typeof STRATEGIES)[number])) return null;
-  if (!SYMBOLS.includes(String(raw.symbol))) return null;
   if (!['t', 's', 'm'].includes(String(raw.durationUnit))) return null;
 
-  return raw as unknown as TradingConfig;
+  return {
+    stake,
+    targetProfit,
+    targetLoss,
+    symbol: FIXED_TRADING_SYMBOL,
+    duration,
+    durationUnit: raw.durationUnit as TradingConfig['durationUnit'],
+    maxTrades,
+    maxConsecutiveLosses,
+    cooldownMinutes,
+  };
 }
 
 export async function GET() {
@@ -61,7 +66,13 @@ export async function GET() {
     const result = await getNeonSql()`
       SELECT trading_config AS config FROM app_users WHERE id = ${user.id}::uuid LIMIT 1
     ` as Record<string, unknown>[];
-    return NextResponse.json({ config: result[0]?.config ?? null });
+    const config = result[0]?.config;
+    const savedConfig = config && typeof config === 'object'
+      ? Object.fromEntries(Object.entries(config as Record<string, unknown>).filter(([key]) => key !== 'strategy'))
+      : {};
+    return NextResponse.json({
+      config: config && typeof config === 'object' ? { ...savedConfig, symbol: FIXED_TRADING_SYMBOL } : null,
+    });
   } catch (error) {
     console.error('Trading configuration lookup failed:', error instanceof Error ? error.message : 'Unknown error');
     return NextResponse.json({ error: 'Configuration service is unavailable.' }, { status: 503 });

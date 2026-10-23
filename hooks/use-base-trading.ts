@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { useActiveSymbols } from '@deriv/core';
 import type { DerivWS, ActiveSymbol } from '@deriv/core';
 import { useAppTranslations } from '@/components/custom/i18n-provider';
-import { useOpenPositions } from './use-open-positions';
+import { useOpenPositions, type OpenPosition } from './use-open-positions';
 import { useClosedPositions, type ClosedPosition } from './use-closed-positions';
 
 export interface UseBaseTradingParams {
@@ -19,12 +19,16 @@ export interface UseBaseTradingParams {
   onAuthWSFailed?: () => void;
   /** Contract types used to filter available symbols and duration limits. */
   contractTypes: string[];
+  preferredSymbol?: string;
 }
 
 export interface UseBaseTradingReturn {
   isLoading: boolean;
   error: string | null;
+  symbols: ActiveSymbol[];
+  selectSymbol: (symbol: string) => boolean;
   activeSymbol: ActiveSymbol | null;
+  openPositions: OpenPosition[];
   closedPositions: ClosedPosition[];
 }
 
@@ -41,6 +45,7 @@ export function useBaseTrading({
   isAuthenticated,
   onAuthWSFailed,
   contractTypes,
+  preferredSymbol,
 }: UseBaseTradingParams): UseBaseTradingReturn {
   const { localize } = useAppTranslations();
 
@@ -52,7 +57,7 @@ export function useBaseTrading({
     }
   }, [isExhausted, ws, onAuthWSFailed]);
 
-  const { activeSymbol, isLoading: symbolsLoading } = useActiveSymbols(ws, isConnected, contractTypes);
+  const { activeSymbol, symbols, selectSymbol, error, isLoading: symbolsLoading } = useActiveSymbols(ws, isConnected, contractTypes, preferredSymbol);
 
   // Surface errors from the live market and settlement subscriptions.
   useEffect(() => {
@@ -100,8 +105,11 @@ export function useBaseTrading({
 
   return {
     isLoading: !isConnected || symbolsLoading,
-    error: null,
+    error,
+    symbols,
+    selectSymbol,
     activeSymbol,
+    openPositions,
     closedPositions,
   };
 }

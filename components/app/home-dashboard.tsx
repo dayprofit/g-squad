@@ -6,6 +6,7 @@ import { useTicks } from '@deriv/core';
 import type { BuyResponse, ProposalResponse } from '@deriv/core';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { useBaseTrading } from '@/hooks/use-base-trading';
+import { FIXED_TRADING_SYMBOL, FIXED_TRADING_SYMBOL_NAME } from '@/lib/trading-constants';
 
 interface ConsoleEntry {
   id: number;
@@ -18,7 +19,6 @@ interface TradingConfig {
   stake: number;
   targetProfit: number;
   targetLoss: number;
-  strategy: 'breakout' | 'reversal' | 'both';
   symbol: string;
   duration: number;
   durationUnit: 't' | 's' | 'm';
@@ -54,7 +54,7 @@ function findCandidate(prices: number[]): 'CALL' | 'PUT' | null {
 export function HomeDashboard() {
   const { ws, isConnected, isExhausted, auth } = useDerivWSContext();
   const { authState, activeAccount, activeAccountId, login, logout } = auth;
-  const trading = useBaseTrading({ ws, isConnected, isExhausted, isAuthenticated: !!auth.wsUrl, onAuthWSFailed: () => { void logout(); }, contractTypes: ['CALL', 'PUT'] });
+  const trading = useBaseTrading({ ws, isConnected, isExhausted, isAuthenticated: !!auth.wsUrl, onAuthWSFailed: () => { void logout(); }, contractTypes: ['CALL', 'PUT'], preferredSymbol: FIXED_TRADING_SYMBOL });
   const { prices } = useTicks(ws, isConnected, trading.activeSymbol, 60);
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
   const [connectError, setConnectError] = useState('');
@@ -72,28 +72,29 @@ export function HomeDashboard() {
   const tradeCountRef = useRef(0);
   const consecutiveLossesRef = useRef(0);
   const lastTradeAtRef = useRef(0);
+  const activeBotContractRef = useRef<number | null>(null);
   const startingBalanceRef = useRef<number | null>(null);
   const botAccountIdRef = useRef<string | null>(null);
-  const lastBotSettlementRef = useRef<number | null>(null);
+  const botAccountTypeRef = useRef<'demo' | 'real' | null>(null);
   const currentAccountRef = useRef(activeAccount);
   const currentAccountIdRef = useRef(activeAccountId);
   const currentConnectionRef = useRef({ ws, isConnected });
   const currentPricesRef = useRef(prices);
+  const currentOpenPositionsRef = useRef(trading.openPositions);
   currentAccountRef.current = activeAccount;
   currentAccountIdRef.current = activeAccountId;
   currentConnectionRef.current = { ws, isConnected };
   currentPricesRef.current = prices;
+  currentOpenPositionsRef.current = trading.openPositions;
 
   const accountConnected = !!auth.wsUrl && isConnected && !!activeAccount;
-  const demoAccount = accountConnected && activeAccount.account_type === 'demo';
-
   useEffect(() => {
     let cancelled = false;
     fetch('/api/trading/config', { cache: 'no-store' })
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error ?? 'Could not load trading configuration.');
-        if (!cancelled && payload.config) setConfig(payload.config as TradingConfig);
+        if (!cancelled && payload.config) setConfig({ ...payload.config, symbol: FIXED_TRADING_SYMBOL } as TradingConfig);
       })
       .catch((error: unknown) => {
         if (!cancelled) setConfigurationError(error instanceof Error ? error.message : 'Could not load trading configuration.');
@@ -132,8 +133,8 @@ export function HomeDashboard() {
 
   useEffect(() => {
     if (!isBotRunning) return;
-    if (!accountConnected || activeAccount?.account_type !== 'demo' || activeAccountId !== botAccountIdRef.current) {
-      stopBot('Bot stopped because its demo account connection changed.');
+    if (!accountConnected || activeAccount?.account_type !== botAccountTypeRef.current || activeAccountId !== botAccountIdRef.current) {
+      stopBot('Bot stopped because its selected Deriv account changed.');
     }
   }, [isBotRunning, accountConnected, activeAccount?.account_type, activeAccountId, stopBot]);
 
@@ -150,28 +151,22 @@ export function HomeDashboard() {
   }, [isBotRunning, activeAccount?.balance, activeAccount, config?.targetProfit, config?.targetLoss, stopBot]);
 
   useEffect(() => {
-    if (!isBotRunning) return;
-    const latest = trading.closedPositions[0];
-    if (!latest || latest.contract_id === lastBotSettlementRef.current) return;
-    const priorIndex = trading.closedPositions.findIndex((position) => position.contract_id === lastBotSettlementRef.current);
-    if (lastBotSettlementRef.current !== null && priorIndex < 0) {
-      lastBotSettlementRef.current = latest.contract_id;
-      return;
-    }
-    const settled = lastBotSettlementRef.current === null ? [latest] : trading.closedPositions.slice(0, priorIndex).reverse();
-    for (const position of settled) {
-      const profit = position.sell_price - position.buy_price;
-      consecutiveLossesRef.current = profit < 0 ? consecutiveLossesRef.current + 1 : 0;
-      lastBotSettlementRef.current = position.contract_id;
-      if (consecutiveLossesRef.current >= (config?.maxConsecutiveLosses ?? Infinity)) {
-        stopBot('Bot stopped after reaching the consecutive-loss limit.');
-        return;
-      }
+    const contractId = activeBotContractRef.current;
+    if (contractId === null) return;
+    const position = trading.closedPositions.find((candidate) => candidate.contract_id === contractId);
+    if (!position) return;
+    activeBotContractRef.current = null;
+    if (!botRunningRef.current) return;
+    const profit = position.sell_price - position.buy_price;
+    consecutiveLossesRef.current = profit < 0 ? consecutiveLossesRef.current + 1 : 0;
+    if (consecutiveLossesRef.current >= (config?.maxConsecutiveLosses ?? Infinity)) {
+      stopBot('Bot stopped after reaching the consecutive-loss limit.');
     }
   }, [isBotRunning, trading.closedPositions, config?.maxConsecutiveLosses, stopBot]);
 
   useEffect(() => {
-    if (!isBotRunning || !config || !demoAccount || !ws || !isConnected) return;
+    if (!isBotRunning || !config || !accountConnected || !ws || !isConnected) return;
+    if (activeBotContractRef.current !== null) return;
     if (trading.activeSymbol?.underlying_symbol !== config.symbol) return;
     const direction = findCandidate(prices);
     if (!direction) {
@@ -181,21 +176,9 @@ export function HomeDashboard() {
     if (lastCandidateRef.current === direction || processingSignalRef.current) return;
     lastCandidateRef.current = direction;
 
-    const reviewAndTrade = async () => {
+    const placeTrade = async () => {
       processingSignalRef.current = true;
       try {
-        const response = await fetch('/api/trading/ai-review', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ symbol: config.symbol, direction, prices: prices.slice(-60) }),
-        });
-        const review = await response.json();
-        if (!response.ok) throw new Error(review.error ?? 'Automated review could not be completed.');
-        if (review.decision !== 'approve') {
-          addEntry('INFO', 'A trade candidate was rejected by the automated review.');
-          return;
-        }
-
         const connection = currentConnectionRef.current;
         const account = currentAccountRef.current;
         if (
@@ -203,11 +186,12 @@ export function HomeDashboard() {
           !connection.isConnected ||
           !connection.ws ||
           !account ||
-          account.account_type !== 'demo' ||
+          account.account_type !== botAccountTypeRef.current ||
           account.account_id !== botAccountIdRef.current ||
           currentAccountIdRef.current !== botAccountIdRef.current ||
           findCandidate(currentPricesRef.current) !== direction
         ) return;
+        if (currentOpenPositionsRef.current.some((position) => position.status === 'open' && position.underlying_symbol === FIXED_TRADING_SYMBOL)) return;
         if (tradeCountRef.current >= config.maxTrades) {
           stopBot('Bot stopped after reaching the maximum trade count.');
           return;
@@ -235,30 +219,37 @@ export function HomeDashboard() {
           !botRunningRef.current ||
           !latestConnection.isConnected ||
           latestConnection.ws !== connection.ws ||
-          latestAccount?.account_type !== 'demo' ||
+          latestAccount?.account_type !== botAccountTypeRef.current ||
           latestAccount.account_id !== botAccountIdRef.current ||
           currentAccountIdRef.current !== botAccountIdRef.current ||
-          findCandidate(currentPricesRef.current) !== direction
+          findCandidate(currentPricesRef.current) !== direction ||
+          currentOpenPositionsRef.current.some((position) => position.status === 'open' && position.underlying_symbol === FIXED_TRADING_SYMBOL)
         ) return;
+        if (activeBotContractRef.current !== null) return;
+        if (config.stake > Number(latestAccount.balance)) {
+          stopBot('Bot stopped because the configured stake exceeds the selected account balance.');
+          return;
+        }
 
         const buyResponse = await connection.ws.send<BuyResponse>({
           buy: proposal.id,
           price: String(proposal.ask_price),
         });
-        if (!buyResponse.buy?.contract_id) throw new Error('Deriv did not confirm the demo trade.');
+        if (!buyResponse.buy?.contract_id) throw new Error('Deriv did not confirm the trade.');
+        activeBotContractRef.current = buyResponse.buy.contract_id;
         tradeCountRef.current += 1;
         lastTradeAtRef.current = Date.now();
-        addEntry('SUCCESS', 'AI-approved demo trade placed.');
+        addEntry('SUCCESS', `${account.account_type === 'real' ? 'Real' : 'Demo'} trade placed.`);
         if (tradeCountRef.current >= config.maxTrades) stopBot('Bot stopped after reaching the maximum trade count.');
       } catch (error) {
-        console.error('Automated demo trading stopped:', error instanceof Error ? error.message : 'Unknown error');
-        stopBot('Bot stopped because a trade review or order could not be completed.');
+        console.error('Automated trading stopped:', error instanceof Error ? error.message : 'Unknown error');
+        stopBot(error instanceof Error ? `Bot stopped: ${error.message}` : 'Bot stopped because the order could not be completed.');
       } finally {
         processingSignalRef.current = false;
       }
     };
-    void reviewAndTrade();
-  }, [isBotRunning, config, demoAccount, ws, isConnected, trading.activeSymbol?.underlying_symbol, prices, addEntry, stopBot]);
+    void placeTrade();
+  }, [isBotRunning, config, accountConnected, ws, isConnected, trading.activeSymbol?.underlying_symbol, prices, addEntry, stopBot]);
 
   useEffect(() => () => {
     botRunningRef.current = false;
@@ -297,13 +288,24 @@ export function HomeDashboard() {
   const realAccountOption = auth.accounts.find((account) => account.account_type === 'real');
 
   function startBot() {
-    if (!demoAccount || !activeAccount || !config || !isConnected || !ws) return;
-    if (trading.activeSymbol?.underlying_symbol !== config.symbol) {
-      setBotMessage('Select the configured market before starting.');
+    if (!accountConnected || !activeAccount || !config || !isConnected || !ws) return;
+    if (activeAccount.account_type === 'real' && !window.confirm(
+      'Real-money trading warning\n\nThe bot will place automated trades using real funds in your selected Deriv account. Losses are possible. Confirm you want to start real-account automation?'
+    )) return;
+    if (activeBotContractRef.current !== null) {
+      setBotMessage('Wait for the bot’s open contract to settle before restarting.');
+      return;
+    }
+    if (trading.openPositions.some((position) => position.status === 'open' && position.underlying_symbol === FIXED_TRADING_SYMBOL)) {
+      setBotMessage(`Wait for the open ${FIXED_TRADING_SYMBOL_NAME} contract to settle before starting automation.`);
+      return;
+    }
+    if (trading.activeSymbol?.underlying_symbol !== FIXED_TRADING_SYMBOL) {
+      setBotMessage(`${FIXED_TRADING_SYMBOL_NAME} is not available yet. Wait for the market feed before starting.`);
       return;
     }
     if (!Number.isFinite(Number(activeAccount.balance))) {
-      setBotMessage('The demo account balance is unavailable.');
+      setBotMessage('The selected account balance is unavailable.');
       return;
     }
     processingSignalRef.current = false;
@@ -313,11 +315,11 @@ export function HomeDashboard() {
     lastTradeAtRef.current = 0;
     startingBalanceRef.current = Number(activeAccount.balance);
     botAccountIdRef.current = activeAccount.account_id;
-    lastBotSettlementRef.current = trading.closedPositions[0]?.contract_id ?? null;
+    botAccountTypeRef.current = activeAccount.account_type;
     botRunningRef.current = true;
-    setBotMessage('Bot is running on the selected demo account. Keep this page open.');
+    setBotMessage(`Bot is running on the selected ${activeAccount.account_type} account. Keep this page open.`);
     setIsBotRunning(true);
-    addEntry('INFO', 'Demo-only automated trading started.');
+    addEntry('INFO', `${activeAccount.account_type === 'real' ? 'Real-money' : 'Demo'} automated trading started.`);
   }
 
   function stopBotManually() {
@@ -351,21 +353,20 @@ export function HomeDashboard() {
         {(connectError || auth.error) && <p className="gq-inline-error" role="alert">{connectError || auth.error}</p>}
       </section>
       <section className="gq-card gq-bot-card">
-        <div className="gq-card-heading"><div className="gq-section-icon gq-section-icon-dark"><Bot size={18} /></div><div><h2>Automatic trading</h2><p>AI-assisted demo automation</p></div><span className={`gq-state-tag ${isBotRunning ? 'is-online' : 'is-unavailable'}`}>{isBotRunning ? 'RUNNING' : 'STOPPED'}</span></div>
-        <div className="gq-worker-warning"><AlertTriangle size={16} /><p>Demo accounts only. Every trade requires automated review. This bot runs only while this page stays open; any error stops it.</p></div>
+        <div className="gq-card-heading"><div className="gq-section-icon gq-section-icon-dark"><Bot size={18} /></div><div><h2>Automatic trading</h2><p>Fixed market · {FIXED_TRADING_SYMBOL_NAME}</p></div><span className={`gq-state-tag ${isBotRunning ? 'is-online' : 'is-unavailable'}`}>{isBotRunning ? 'RUNNING' : 'STOPPED'}</span></div>
+        <div className="gq-worker-warning"><AlertTriangle size={16} /><p>Real-account trades use real funds. Confirm before starting on Real. This bot runs only while this page stays open; errors or account changes stop it.</p></div>
         <div className="gq-bot-actions">
-          <button className="gq-primary-button" type="button" onClick={startBot} disabled={isBotRunning || !demoAccount || !config || !isConnected || !ws}><Play size={16} fill="currentColor" />Start</button>
+          <button className="gq-primary-button" type="button" onClick={startBot} disabled={isBotRunning || !accountConnected || !config || !isConnected || !ws}><Play size={16} fill="currentColor" />Start {activeAccount?.account_type === 'real' ? 'real' : 'demo'} bot</button>
           <button className="gq-secondary-button" type="button" onClick={stopBotManually} disabled={!isBotRunning}><Pause size={16} />Stop</button>
         </div>
         {(botMessage || configurationError || (!config && !configurationError)) && <p className="gq-footnote" role={configurationError ? 'alert' : 'status'}>{configurationError || botMessage || 'Save bot settings before starting.'}</p>}
-        {config && trading.activeSymbol && trading.activeSymbol.underlying_symbol !== config.symbol && <p className="gq-footnote">Select the configured market in Settings before starting the bot.</p>}
-        <p className="gq-footnote">{accountConnected ? `Market: ${trading.activeSymbol?.underlying_symbol ?? 'loading'}` : 'Connect a Deriv demo account to enable automation.'}</p>
+        {trading.error && <p className="gq-inline-error" role="alert">{trading.error}</p>}
+        {!accountConnected && <p className="gq-footnote">Connect a Deriv account to enable automation.</p>}
       </section>
-      <section className="gq-card gq-console-card">
-        <div className="gq-console-heading"><div><h2>Activity console</h2><p>Newest events first</p></div><span><Activity size={14} />{entries.length} EVENTS</span></div>
+      <details className="gq-card gq-console-card">
+        <summary className="gq-console-heading"><div><h2>Activity history</h2><p>Newest events first</p></div><span><Activity size={14} />{entries.length} EVENTS</span></summary>
         <div className="gq-console" aria-live="polite">{entries.length === 0 ? <p className="gq-console-empty">Waiting for application or account activity.</p> : entries.map((entry) => <div className="gq-console-line" key={entry.id}><time>{entry.time}</time><b className={`log-${entry.category.toLowerCase()}`}>{entry.category}</b><span>{entry.message}</span></div>)}</div>
-      </section>
-      {trading.error && <p className="gq-inline-error">{trading.error}</p>}
+      </details>
     </div>
   );
 }

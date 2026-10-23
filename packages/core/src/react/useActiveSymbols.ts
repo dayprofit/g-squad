@@ -23,18 +23,20 @@ function writeSymbolToUrl(symbol: string): void {
 interface UseActiveSymbolsReturn {
   symbols: ActiveSymbol[];
   activeSymbol: ActiveSymbol | null;
-  selectSymbol: (symbol: string) => void;
+  selectSymbol: (symbol: string) => boolean;
   contracts: ContractInfo[];
   contractsAvailable: boolean;
   durationLimits: DurationLimits;
   defaultStake: number;
   isLoading: boolean;
+  error: string | null;
 }
 
 export function useActiveSymbols(
   ws: DerivWS | null,
   isConnected: boolean,
-  contractTypes: string[]
+  contractTypes: string[],
+  preferredSymbol?: string
 ): UseActiveSymbolsReturn {
   const [symbols, setSymbols] = useState<ActiveSymbol[]>([]);
   const [activeSymbol, setActiveSymbol] = useState<ActiveSymbol | null>(null);
@@ -43,39 +45,48 @@ export function useActiveSymbols(
   const [durationLimits, setDurationLimits] = useState<DurationLimits>({ min: 1, max: 10, unit: 't' });
   const [defaultStake, setDefaultStake] = useState<number>(10);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadContractsFor = useCallback(async (wsInstance: DerivWS, symbol: ActiveSymbol) => {
-    const response = await wsInstance.send<ContractsForResponse>({
-      contracts_for: symbol.underlying_symbol,
-    });
-
-    const filtered = response.contracts_for?.available?.filter(
-      (c) => contractTypes.includes(c.contract_type)
-    ) ?? [];
+    const response = await wsInstance.send<ContractsForResponse>({ contracts_for: symbol.underlying_symbol });
+    const filtered = response.contracts_for?.available?.filter((c) => contractTypes.includes(c.contract_type)) ?? [];
     setContracts(filtered);
     setContractsAvailable(filtered.length > 0);
-
-    if (filtered.length > 0) {
-      const contract = filtered[0];
-      const minMatch = contract.min_contract_duration.match(/^(\d+)/);
-      const maxMatch = contract.max_contract_duration.match(/^(\d+)/);
-      const unit = contract.min_contract_duration.replace(/^\d+/, '');
-      const min = minMatch ? parseInt(minMatch[1], 10) : 1;
-      const max = maxMatch ? parseInt(maxMatch[1], 10) : 10;
-      setDurationLimits({ min, max, unit });
-      setDefaultStake(contract.default_stake);
+    if (!filtered.length) {
+      setError(`No supported CALL/PUT contracts are currently available for ${symbol.underlying_symbol}.`);
+      return;
     }
+    const contract = filtered[0];
+    const minMatch = contract.min_contract_duration.match(/^(\d+)/);
+    const maxMatch = contract.max_contract_duration.match(/^(\d+)/);
+    const unit = contract.min_contract_duration.replace(/^\d+/, '');
+    const min = minMatch ? parseInt(minMatch[1], 10) : 1;
+    const max = maxMatch ? parseInt(maxMatch[1], 10) : 10;
+    setDurationLimits({ min, max, unit });
+    setDefaultStake(contract.default_stake);
+    setError(null);
   }, [contractTypes]);
 
   const selectSymbol = useCallback((underlyingSymbol: string) => {
-    if (!ws || !isConnected) return;
+    if (!ws || !isConnected) {
+      setError('Connect to Deriv before selecting a market.');
+      return false;
+    }
 
     const symbol = symbols.find((s) => s.underlying_symbol === underlyingSymbol);
-    if (!symbol || symbol.underlying_symbol === activeSymbol?.underlying_symbol) return;
+    if (!symbol) {
+      setError(`Market ${underlyingSymbol} is not available for this Deriv account.`);
+      return false;
+    }
+    setError(null);
+    if (symbol.underlying_symbol === activeSymbol?.underlying_symbol) return true;
 
     setActiveSymbol(symbol);
     writeSymbolToUrl(symbol.underlying_symbol);
-    loadContractsFor(ws, symbol).catch(() => {});
+    loadContractsFor(ws, symbol).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : `Could not load contracts for ${symbol.underlying_symbol}.`);
+    });
+    return true;
   }, [ws, isConnected, symbols, activeSymbol, loadContractsFor]);
 
   useEffect(() => {
@@ -85,6 +96,7 @@ export function useActiveSymbols(
     async function fetchSymbols() {
       try {
         setIsLoading(true);
+        setError(null);
         const response = await ws!.send<{ active_symbols: ActiveSymbol[] }>({
           active_symbols: 'full',
           contract_type: contractTypes,
@@ -97,7 +109,10 @@ export function useActiveSymbols(
         }
 
         setSymbols(allSymbols);
-        const chosen = pickDefaultSymbol(allSymbols, readSymbolFromUrl());
+        const chosen = preferredSymbol
+          ? allSymbols.find((symbol) => symbol.underlying_symbol === preferredSymbol)
+          : pickDefaultSymbol(allSymbols, readSymbolFromUrl());
+        if (!chosen) throw new Error(`Required market ${preferredSymbol} is unavailable for CALL/PUT trading on this account.`);
         setActiveSymbol(chosen);
         writeSymbolToUrl(chosen.underlying_symbol);
 
@@ -105,14 +120,17 @@ export function useActiveSymbols(
         if (disposed) return;
 
         setIsLoading(false);
-      } catch {
-        if (!disposed) setIsLoading(false);
+      } catch (reason) {
+        if (!disposed) {
+          setError(reason instanceof Error ? reason.message : 'Could not load Deriv markets.');
+          setIsLoading(false);
+        }
       }
     }
 
     fetchSymbols();
     return () => { disposed = true; };
-  }, [ws, isConnected, contractTypes, loadContractsFor]);
+  }, [ws, isConnected, contractTypes, loadContractsFor, preferredSymbol]);
 
   return {
     symbols,
@@ -123,5 +141,6 @@ export function useActiveSymbols(
     durationLimits,
     defaultStake,
     isLoading,
+    error,
   };
 }

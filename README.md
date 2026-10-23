@@ -21,10 +21,6 @@ NEXT_PUBLIC_DERIV_REDIRECT_URI=http://localhost:3000
 NEXT_PUBLIC_DERIV_APP_NAME=G-squad
 NEXT_PUBLIC_DERIV_OAUTH_SCOPES=trade
 NEXT_PUBLIC_DERIV_ENV=production
-
-OLLAMA_BASE_URL=https://ollama.com
-OLLAMA_API_KEY=your-ollama-api-key
-OLLAMA_MODEL=your-cloud-model-name
 ```
 
 Generate the encryption key with `openssl rand -base64 32`. Never use a `NEXT_PUBLIC_` prefix for database credentials, the encryption key, or Deriv tokens. Do not commit `.env.local` or production secrets. The database role needs permission to create tables and indexes and to read/write application data.
@@ -46,12 +42,6 @@ npm run dev
 
 Open `http://localhost:3000`. Registration, login, saved trading configuration, and Deriv account connection require a reachable Neon database. Deriv account connection also requires a valid public app ID and matching registered redirect URI.
 
-### Local AI trade approval
-
-For Ollama Cloud, create an API key in your Ollama account and set `OLLAMA_BASE_URL=https://ollama.com`, `OLLAMA_API_KEY` to that key, and `OLLAMA_MODEL` to a cloud model name available to your account. The server sends the key only in the backend Authorization header; never use a `NEXT_PUBLIC_` prefix or expose it in browser code. For local Ollama instead, use `OLLAMA_BASE_URL=http://127.0.0.1:11434`, leave `OLLAMA_API_KEY` empty, and ensure the selected model has been pulled locally. When the dashboard bot is running, its internal signal detector submits a candidate and recent live ticks to the authenticated server-side Ollama review. Only an `approve` response proceeds to a Deriv demo proposal and order; rejects are skipped, and unavailable, timed-out, or invalid responses stop the bot without placing an order. Ollama is not exposed as a user-facing strategy control.
-
-On Vercel, add `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, and `OLLAMA_MODEL` in **Project → Settings → Environment Variables**, for each environment you use (Production, Preview, or Development), then redeploy. Ollama Cloud is reachable from Vercel; a local `127.0.0.1` Ollama server is not.
-
 ## Build and deploy
 
 ```bash
@@ -63,6 +53,6 @@ This application now uses server route handlers for authentication and saved con
 
 ## Trading automation status
 
-The dashboard can run an AI-reviewed bot using the currently selected Deriv demo account. The bot runs in the open dashboard tab and stops if the tab closes, the account changes, a configured risk limit is reached, or review/order processing fails. It cannot trade real accounts. This is not a persistent server-side worker; do not rely on a browser tab for unattended trading. Ollama decisions are fallible and do not guarantee profitable outcomes.
+The dashboard can run automated trades using the fixed Volatility 100 (1s) Index market. It allows only one bot-managed open contract at a time. The bot runs in the open dashboard tab and stops if the tab closes, the account changes, a configured risk limit is reached, or order processing fails. Demo and real Deriv accounts are supported; starting the bot on a real account requires an explicit confirmation and places trades with real funds. This is not a persistent server-side worker; do not rely on a browser tab for unattended trading. Automated trading can lose money and does not guarantee profit.
 
 The requested logo is served from `public/logo.png` and is used by the app header and favicon.
