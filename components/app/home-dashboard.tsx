@@ -58,6 +58,8 @@ export function HomeDashboard() {
   const { prices } = useTicks(ws, isConnected, trading.activeSymbol, 60);
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
   const [connectError, setConnectError] = useState('');
+  const [accountSwitchError, setAccountSwitchError] = useState('');
+  const [switchingAccount, setSwitchingAccount] = useState(false);
   const [configurationError, setConfigurationError] = useState('');
   const [config, setConfig] = useState<TradingConfig | null>(null);
   const [isBotRunning, setIsBotRunning] = useState(false);
@@ -274,6 +276,26 @@ export function HomeDashboard() {
     catch (error) { setConnectError(error instanceof Error ? error.message : 'Could not connect to Deriv.'); }
   }
 
+  async function switchAccount(accountType: 'demo' | 'real') {
+    const account = auth.accounts.find((candidate) => candidate.account_type === accountType);
+    if (!account || account.account_id === activeAccountId || switchingAccount) return;
+    if (botRunningRef.current) stopBot('Bot stopped because the Deriv account is being switched.');
+    setSwitchingAccount(true);
+    setAccountSwitchError('');
+    try {
+      await auth.switchAccount(account.account_id);
+      setBotMessage(`Switched to the ${accountType} account.`);
+      addEntry('INFO', `Deriv ${accountType} account selected.`);
+    } catch (error) {
+      setAccountSwitchError(error instanceof Error ? error.message : 'Could not switch Deriv accounts.');
+    } finally {
+      setSwitchingAccount(false);
+    }
+  }
+
+  const demoAccountOption = auth.accounts.find((account) => account.account_type === 'demo');
+  const realAccountOption = auth.accounts.find((account) => account.account_type === 'real');
+
   function startBot() {
     if (!demoAccount || !activeAccount || !config || !isConnected || !ws) return;
     if (trading.activeSymbol?.underlying_symbol !== config.symbol) {
@@ -308,6 +330,16 @@ export function HomeDashboard() {
       <section className="gq-card gq-account-card">
         <div className="gq-card-heading"><div className="gq-section-icon"><Wallet size={18} /></div><div><h2>Deriv account</h2><p>{accountConnected ? `${activeAccount.account_id} · ${activeAccount.account_type === 'demo' ? 'Demo' : 'Real'}` : 'Not connected'}</p></div><span className={`gq-connection-dot ${accountConnected ? 'is-online' : ''}`} aria-label={accountConnected ? 'Connected' : 'Not connected'} /></div>
         <div className="gq-balance-block"><span>Current balance</span><strong>{accountConnected ? money(Number(activeAccount.balance), activeAccount.currency) : 'Connect Deriv'}</strong></div>
+        {accountConnected && <div className="gq-account-switch" role="group" aria-label="Switch Deriv account type">
+          <span>Account</span>
+          <div>
+            <button type="button" className={activeAccount.account_type === 'demo' ? 'is-selected' : ''} aria-pressed={activeAccount.account_type === 'demo'} disabled={switchingAccount || !demoAccountOption || activeAccount.account_type === 'demo'} onClick={() => void switchAccount('demo')}>Demo</button>
+            <button type="button" className={activeAccount.account_type === 'real' ? 'is-selected' : ''} aria-pressed={activeAccount.account_type === 'real'} disabled={switchingAccount || !realAccountOption || activeAccount.account_type === 'real'} onClick={() => void switchAccount('real')}>Real</button>
+          </div>
+          {switchingAccount && <span className="gq-account-switch-status" role="status">Switching…</span>}
+          {(!demoAccountOption || !realAccountOption) && <span className="gq-account-switch-status">Only authorized account types are available.</span>}
+        </div>}
+        {accountSwitchError && <p className="gq-inline-error" role="alert">{accountSwitchError}</p>}
         <div className="gq-stat-grid">
           <Stat label="P/L" value={accountConnected ? money(profitLoss, activeAccount.currency) : '—'} tone={profitLoss > 0 ? 'positive' : profitLoss < 0 ? 'negative' : ''} icon={profitLoss >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />} />
           <Stat label="Wins" value={accountConnected ? String(wins) : '—'} /><Stat label="Losses" value={accountConnected ? String(losses) : '—'} />

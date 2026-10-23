@@ -95,6 +95,13 @@ button { color: inherit; }
 .gq-balance-block { display: flex; flex-direction: column; gap: 4px; margin: 17px 0 14px; }
 .gq-balance-block span { color: var(--gq-muted); font-size: 11px; }
 .gq-balance-block strong { font-size: 29px; font-weight: 760; letter-spacing: 0; }
+.gq-account-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 0 0 13px; }
+.gq-account-switch > span:first-child { color: var(--gq-muted); font-size: 10px; font-weight: 700; }
+.gq-account-switch > div { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid var(--gq-line); border-radius: 8px; background: #f7f8f5; }
+.gq-account-switch button { min-width: 62px; min-height: 30px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: #62695f; font-size: 10px; font-weight: 700; cursor: pointer; }
+.gq-account-switch button.is-selected { background: white; color: var(--gq-ink); box-shadow: 0 1px 4px rgb(29 42 22 / 12%); }
+.gq-account-switch button:disabled { cursor: not-allowed; opacity: .55; }
+.gq-account-switch-status { color: var(--gq-muted); font-size: 9px; }
 .gq-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 11px 0; border-top: 1px solid #edf0eb; border-bottom: 1px solid #edf0eb; }
 .gq-stat { min-width: 0; padding: 0 8px; border-right: 1px solid #edf0eb; }
 .gq-stat:first-child { padding-left: 0; }
