@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { MessageCircle, LoaderCircle, Send } from 'lucide-react';
+import { ArrowLeft, MessageCircle, LoaderCircle, Send } from 'lucide-react';
 import { playChatNotificationSound, unlockChatNotificationSound } from '@/components/chat/chat-notification-sound';
 
 interface ChatMessage {
@@ -54,6 +54,7 @@ export function AdminChatWorkspace({ adminRequest, onError, onNotice }: {
   const [draft, setDraft] = useState('');
   const [department, setDepartment] = useState('support');
   const [assignedTo, setAssignedTo] = useState('');
+  const [mobileShowChat, setMobileShowChat] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -201,12 +202,12 @@ export function AdminChatWorkspace({ adminRequest, onError, onNotice }: {
     person.role === 'owner' || person.department === department);
 
   return (
-    <section className="gq-admin-chat-workspace">
+    <section className={`gq-admin-chat-workspace ${mobileShowChat ? 'has-mobile-selection' : ''}`}>
       <aside className="gq-admin-chat-list">
-        <div className="gq-admin-chat-list-heading"><div><h2>Conversations</h2><p>{inbox.chats.length} active and recent</p></div></div>
+        <div className="gq-admin-chat-list-heading"><div><h2>Chat list</h2><p>{inbox.chats.length} conversations</p></div></div>
         {loading && !inbox.chats.length ? <div className="gq-chat-loading"><LoaderCircle className="gq-spin" size={18} />Loading inbox…</div> :
           inbox.chats.length ? inbox.chats.map((chat) => (
-            <button type="button" key={chat.id} className={`gq-admin-chat-list-item ${selectedId === chat.id ? 'is-selected' : ''}`} onClick={() => setSelectedId(chat.id)}>
+            <button type="button" key={chat.id} className={`gq-admin-chat-list-item ${selectedId === chat.id ? 'is-selected' : ''}`} onClick={() => { setSelectedId(chat.id); setMobileShowChat(true); }}>
               <span className="gq-admin-chat-avatar">{chat.userName.trim().charAt(0).toUpperCase()}</span>
               <span className="gq-admin-chat-list-copy"><strong>{chat.userName}</strong><small>{chat.lastMessage || 'No messages yet'}</small><small>{chat.assignedName ? `With ${chat.assignedName}` : `${chat.department.replace('_', ' ')} queue`}</small></span>
               <span className={`gq-admin-chat-status is-${chat.status}`}>{chat.status}</span>
@@ -216,7 +217,8 @@ export function AdminChatWorkspace({ adminRequest, onError, onNotice }: {
       <div className="gq-admin-chat-conversation">
         {selected ? <>
           <header className="gq-admin-chat-header">
-            <div><span className="gq-admin-chat-avatar">{selected.userName.trim().charAt(0).toUpperCase()}</span><div><h2>{selected.userName}</h2><p>{selected.userEmail} · {selected.department.replace('_', ' ')}</p></div></div>
+            <button className="gq-admin-chat-back" type="button" onClick={() => setMobileShowChat(false)} aria-label="Back to chat list"><ArrowLeft size={17} /><span>Chats</span></button>
+            <div className="gq-admin-chat-identity"><span className="gq-admin-chat-avatar">{selected.userName.trim().charAt(0).toUpperCase()}</span><div><h2>{selected.userName}</h2><p>{selected.userEmail} · {selected.department.replace('_', ' ')}</p></div></div>
             <div className="gq-admin-chat-owner"><span>Assigned to</span><strong>{selected.assignedName ?? `${selected.department.replace('_', ' ')} queue`}</strong>{inbox.typing && <small>{inbox.typing} is typing…</small>}</div>
           </header>
           <div className="gq-admin-chat-transcript" role="log" aria-live="polite" aria-label="Selected conversation messages">
