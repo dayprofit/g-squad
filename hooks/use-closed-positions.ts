@@ -32,11 +32,13 @@ export function useClosedPositions(
 ) {
   const [positions, setPositions] = useState<ClosedPosition[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetch = useCallback(async () => {
     if (!ws || !isConnected || !isAuthenticated) return;
 
     setIsLoading(true);
+    setError(null);
     try {
       const response = await ws.send<ProfitTableResponse>({
         profit_table: 1,
@@ -45,8 +47,8 @@ export function useClosedPositions(
         limit: 50,
       });
       setPositions(response.profit_table?.transactions ?? []);
-    } catch {
-      // silent — table simply stays empty on error
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not load Deriv trading history.');
     } finally {
       setIsLoading(false);
     }
@@ -56,5 +58,5 @@ export function useClosedPositions(
     fetch();
   }, [fetch]);
 
-  return { positions, isLoading, refresh: fetch };
+  return { positions, isLoading, error, refresh: fetch };
 }

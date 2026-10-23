@@ -71,7 +71,9 @@ export function AppShell() {
       </header>
       <DerivWSProvider>
         <main className="gq-main">
-          {tab === 'home' && <HomeDashboard />}
+          <div className="gq-tab-panel" hidden={tab !== 'home'}>
+            <HomeDashboard />
+          </div>
           {tab === 'configure' && <ConfigureScreen onNotice={setNotice} />}
           {tab === 'chat' && <ChatScreen />}
           {tab === 'profile' && <ProfileScreen onNotice={setNotice} />}

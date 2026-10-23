@@ -30,6 +30,7 @@ export interface UseBaseTradingReturn {
   activeSymbol: ActiveSymbol | null;
   openPositions: OpenPosition[];
   closedPositions: ClosedPosition[];
+  closedPositionsError: string | null;
 }
 
 /**
@@ -86,7 +87,7 @@ export function useBaseTrading({
   }, [ws, isConnected, localize]);
 
   const { positions: openPositions } = useOpenPositions(ws, isConnected, isAuthenticated);
-  const { positions: closedPositions, refresh: refreshClosedPositions } = useClosedPositions(
+  const { positions: closedPositions, error: closedPositionsError, refresh: refreshClosedPositions } = useClosedPositions(
     ws,
     isConnected,
     isAuthenticated
@@ -111,5 +112,6 @@ export function useBaseTrading({
     activeSymbol,
     openPositions,
     closedPositions,
+    closedPositionsError,
   };
 }
