@@ -1,22 +1,19 @@
 # G-squad
 
-Mobile-first trading workspace for a user's application account and Deriv account. Application registration and sessions are stored in Neo4j; Deriv OAuth remains a separate authorization flow.
+Mobile-first trading workspace for a user's application account and Deriv account. Application registration, sessions, trading configuration, and Deriv OAuth credentials are stored in Neon Postgres.
 
 ## Requirements
 
 - Node.js 20 or later
-- Neo4j 5.x or Neo4j Aura
+- A Neon Postgres database
 - A Deriv registered application ID and redirect URI
 
 ## Configure
 
-Create `.env.local` with server-only Neo4j credentials and the public Deriv application ID:
+Create `.env.local` with the server-only Neon connection string, encryption key, and Deriv application settings:
 
 ```env
-NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=replace-with-a-secret
-NEO4J_DATABASE=neo4j
+DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 DERIV_TOKEN_ENCRYPTION_KEY=generate-a-base64-encoded-32-byte-key
 
 NEXT_PUBLIC_DERIV_APP_ID=your-registered-app-id
@@ -26,15 +23,15 @@ NEXT_PUBLIC_DERIV_OAUTH_SCOPES=trade
 NEXT_PUBLIC_DERIV_ENV=production
 ```
 
-Generate the encryption key with `openssl rand -base64 32`. Never use a `NEXT_PUBLIC_` prefix for database credentials, the encryption key, or Deriv tokens. Do not commit `.env.local` or production secrets. The database account must be allowed to create uniqueness constraints and read/write application nodes.
+Generate the encryption key with `openssl rand -base64 32`. Never use a `NEXT_PUBLIC_` prefix for database credentials, the encryption key, or Deriv tokens. Do not commit `.env.local` or production secrets. The database role needs permission to create tables and indexes and to read/write application data.
 
-The app creates these Neo4j uniqueness constraints on first registration:
+The app creates its Postgres tables and indexes automatically when first used:
 
-- `AppUser.email`
-- `AppUser.accountId`
-- `AppSession.tokenHash`
+- `app_users`
+- `app_sessions`
+- `deriv_oauth_flows`
 
-Application passwords are stored as scrypt hashes. Login sessions use random opaque tokens stored only as SHA-256 hashes in Neo4j and sent to the browser in HTTP-only, SameSite cookies. Deriv access and refresh tokens are AES-GCM encrypted in Neo4j and are never written to browser storage.
+Application passwords are stored as scrypt hashes. Login sessions use random opaque tokens stored only as SHA-256 hashes in Postgres and sent to the browser in HTTP-only, SameSite cookies. Deriv access and refresh tokens are AES-GCM encrypted in Postgres and are never written to browser storage.
 
 ## Run
 
@@ -43,7 +40,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Registration and app login require a reachable Neo4j instance. Deriv account connection requires a valid public app ID and matching registered redirect URI.
+Open `http://localhost:3000`. Registration, login, saved trading configuration, and Deriv account connection require a reachable Neon database. Deriv account connection also requires a valid public app ID and matching registered redirect URI.
 
 ## Build and deploy
 
