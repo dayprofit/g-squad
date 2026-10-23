@@ -8,6 +8,7 @@ import { AuthScreen } from './auth-screen';
 import { ConfigureScreen } from './configure-screen';
 import { HomeDashboard } from './home-dashboard';
 import { ProfileScreen } from './profile-screen';
+import { ChatScreen } from './chat-screen';
 
 type AppTab = 'home' | 'configure' | 'chat' | 'profile';
 const NAV_ITEMS: { id: AppTab; label: string; href: string; icon: typeof House }[] = [
@@ -70,7 +71,7 @@ export function AppShell() {
         <div className="gq-header-actions">{user.isAdmin && <a className="gq-admin-link" href="/admin"><ShieldCheck size={16} />Admin</a>}<button className="gq-avatar" type="button" aria-label="Open profile" onClick={() => navigate('profile')}>{initials}</button><button className="gq-icon-button" type="button" aria-label="Log out of G-squad" title="Log out of G-squad" onClick={() => void logoutApplication()}><LogOut size={18} /></button></div>
       </header>
       <DerivWSProvider>
-        <main className="gq-main">
+        <main className={`gq-main ${tab === 'chat' ? 'gq-main-chat' : ''}`}>
           <div className="gq-tab-panel" hidden={tab !== 'home'}>
             <HomeDashboard />
           </div>
@@ -85,8 +86,4 @@ export function AppShell() {
       </nav>
     </div>
   );
-}
-
-function ChatScreen() {
-  return <div className="gq-page-content gq-chat-page"><div className="gq-page-heading"><div><p className="gq-eyebrow">COMMUNITY</p><h1>Chat</h1></div></div><section className="gq-chat-empty"><div className="gq-chat-symbol"><MessageCircle size={27} /></div><span className="gq-eyebrow">IN DEVELOPMENT</span><h2>Coming Soon</h2><p>Chat is being developed. It will appear here when ready.</p></section></div>;
 }

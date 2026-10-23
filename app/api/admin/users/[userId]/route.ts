@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/server/admin-auth';
+import { hasAssignedUserAccess, requireAdmin } from '@/lib/server/admin-auth';
 import { getCurrentAppSession, isAdminEmail, recordAppUserActivity } from '@/lib/server/app-auth';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 import { validateTradingConfig } from '@/lib/trading-config';
@@ -7,7 +7,7 @@ import { validateTradingConfig } from '@/lib/trading-config';
 export const runtime = 'nodejs';
 
 export async function GET(_request: Request, context: { params: Promise<{ userId: string }> }) {
-  const { role, response } = await requireAdmin('users.details');
+  const { user: admin, role, response } = await requireAdmin('users.details');
   if (response) return response;
   try {
     const { userId } = await context.params;
@@ -15,6 +15,9 @@ export async function GET(_request: Request, context: { params: Promise<{ userId
       return NextResponse.json({ error: 'User ID is invalid.' }, { status: 400 });
     }
     await ensureDatabaseSchema();
+    if (!await hasAssignedUserAccess(admin!.id, role!, userId)) {
+      return NextResponse.json({ error: 'This account is outside your assigned scope.' }, { status: 403 });
+    }
     const userRows = await getNeonSql()`SELECT id::text AS id, account_id AS "accountId",
       full_name AS "fullName", email, joined_at::text AS "joinedAt",
       last_login_at::text AS "lastLoginAt", is_suspended AS "isSuspended",
@@ -125,6 +128,9 @@ export async function PATCH(
       if (access.response) return access.response;
     }
     await ensureDatabaseSchema();
+    if (!await hasAssignedUserAccess(admin!.id, role!, userId)) {
+      return NextResponse.json({ error: 'This account is outside your assigned scope.' }, { status: 403 });
+    }
     const previousRows = await getNeonSql()`SELECT full_name AS "fullName", email, is_suspended AS "isSuspended",
       trading_config AS "tradingConfig",
       EXISTS (SELECT 1 FROM admin_staff WHERE user_id = app_users.id) AS "isStaff"
@@ -132,6 +138,21 @@ export async function PATCH(
     if (!previousRows[0]) return NextResponse.json({ error: 'User was not found.' }, { status: 404 });
     if ((previousRows[0].isStaff === true || isAdminEmail(String(previousRows[0].email))) && role !== 'owner') {
       return NextResponse.json({ error: 'Only an Owner can change an administrator account.' }, { status: 403 });
+    }
+    if (isSuspended === false && previousRows[0].isSuspended === true) {
+      if (role !== 'owner') return NextResponse.json({ error: 'Only an Owner can request account restoration.' }, { status: 403 });
+      if (fields.length !== 1) return NextResponse.json({ error: 'Request account restoration separately from other changes.' }, { status: 400 });
+      const pending = await getNeonSql()`SELECT 1 FROM admin_approvals
+        WHERE target_user_id = ${userId}::uuid AND action_type = 'account.restore' AND status = 'pending' LIMIT 1` as Record<string, unknown>[];
+      if (pending[0]) return NextResponse.json({ error: 'A restore approval is already pending for this account.' }, { status: 409 });
+      const approval = await getNeonSql()`INSERT INTO admin_approvals (requested_by, action_type, target_user_id)
+        VALUES (${admin!.id}::uuid, 'account.restore', ${userId}::uuid)
+        RETURNING id::text AS id` as Record<string, unknown>[];
+      await recordAppUserActivity({
+        actorUserId: admin!.id, subjectUserId: userId, eventType: 'admin.approval_requested',
+        details: { approvalId: String(approval[0].id), actionType: 'account.restore' },
+      });
+      return NextResponse.json({ approvalId: String(approval[0].id), status: 'pending' }, { status: 202 });
     }
     const updated = await getNeonSql()`
       UPDATE app_users SET

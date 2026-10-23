@@ -61,6 +61,24 @@ export async function recordAppUserActivity(input: {
   await getNeonSql()`INSERT INTO app_user_activity (actor_user_id, subject_user_id, event_type, details)
     VALUES (${input.actorUserId ?? null}::uuid, ${input.subjectUserId ?? null}::uuid,
       ${input.eventType}, ${JSON.stringify(input.details ?? {})}::jsonb)`;
+  const notification = ({
+    'admin.case_created': ['New support case', 'A support case was added to the administrator queue.'],
+    'admin.approval_requested': ['Action approval requested', 'A privileged administrator action is waiting for review.'],
+    'admin.staff_access_revoked': ['Staff access revoked', 'An administrator revoked a staff account.'],
+    'admin.retention_cleanup': ['Audit cleanup completed', 'An Owner ran the configured audit-retention cleanup.'],
+  } as Record<string, [string, string]>)[input.eventType];
+  if (!notification) return;
+  const recipients = await getNeonSql()`SELECT u.id::text AS id, u.email
+    FROM app_users u JOIN admin_staff staff ON staff.user_id = u.id` as Record<string, unknown>[];
+  for (const email of (process.env.ADMIN_EMAILS ?? '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean)) {
+    const owner = await getNeonSql()`SELECT id::text AS id, email FROM app_users WHERE lower(email) = ${email} LIMIT 1` as Record<string, unknown>[];
+    if (owner[0] && !recipients.some((recipient) => recipient.id === owner[0].id)) recipients.push(owner[0]);
+  }
+  for (const recipient of recipients) {
+    if (recipient.id === input.actorUserId) continue;
+    await getNeonSql()`INSERT INTO admin_notifications (recipient_id, notification_type, title, message)
+      VALUES (${String(recipient.id)}::uuid, ${input.eventType}, ${notification[0]}, ${notification[1]})`;
+  }
 }
 
 export async function hashPassword(password: string): Promise<string> {

@@ -40,6 +40,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS admin_totp_pending_secret TEXT`;
     await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS admin_totp_last_step BIGINT`;
     await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS admin_totp_backup_codes JSONB NOT NULL DEFAULT '[]'::jsonb`;
+    await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS chat_sound_enabled BOOLEAN NOT NULL DEFAULT true`;
     await sql`CREATE TABLE IF NOT EXISTS app_sessions (
       session_id UUID NOT NULL DEFAULT gen_random_uuid(),
       token_hash TEXT PRIMARY KEY,
@@ -61,8 +62,48 @@ export async function ensureDatabaseSchema(): Promise<void> {
       user_id UUID PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
       role TEXT NOT NULL CHECK (role IN ('support', 'account_manager', 'read_only')),
       invited_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      schedule_timezone TEXT NOT NULL DEFAULT 'UTC',
+      work_schedule JSONB NOT NULL DEFAULT '[]'::jsonb,
+      role_starts_on DATE,
+      role_ends_on DATE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS schedule_timezone TEXT NOT NULL DEFAULT 'UTC'`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS work_schedule JSONB NOT NULL DEFAULT '[]'::jsonb`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS role_starts_on DATE`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS role_ends_on DATE`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS permissions JSONB`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS team_name TEXT`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS region_name TEXT`;
+    await sql`ALTER TABLE admin_staff ADD COLUMN IF NOT EXISTS temporary_access_expires_at TIMESTAMPTZ`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_chats (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL UNIQUE REFERENCES app_users(id) ON DELETE CASCADE,
+      department TEXT NOT NULL DEFAULT 'support' CHECK (department IN ('support', 'account_manager')),
+      assigned_to UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'closed')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_chats_queue_idx ON admin_chats(department, status, updated_at DESC)`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_chat_messages (
+      id BIGSERIAL PRIMARY KEY,
+      chat_id BIGINT NOT NULL REFERENCES admin_chats(id) ON DELETE CASCADE,
+      sender_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      sender_type TEXT NOT NULL CHECK (sender_type IN ('investor', 'staff')),
+      sender_name TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_chat_messages_chat_idx ON admin_chat_messages(chat_id, id)`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_chat_typing (
+      chat_id BIGINT NOT NULL REFERENCES admin_chats(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      is_typing BOOLEAN NOT NULL DEFAULT true,
+      expires_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (chat_id, user_id)
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_chat_typing_expiry_idx ON admin_chat_typing(chat_id, expires_at)`;
     await sql`CREATE TABLE IF NOT EXISTS admin_invitations (
       id BIGSERIAL PRIMARY KEY,
       token_hash TEXT NOT NULL UNIQUE,
@@ -139,6 +180,120 @@ export async function ensureDatabaseSchema(): Promise<void> {
     )`;
     await sql`CREATE INDEX IF NOT EXISTS app_trading_config_history_subject_idx
       ON app_trading_config_history(subject_user_id, created_at DESC)`;
+    await sql`CREATE TABLE IF NOT EXISTS app_bot_trade_results (
+      user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      contract_id BIGINT NOT NULL,
+      account_type TEXT NOT NULL CHECK (account_type IN ('demo', 'real')),
+      currency TEXT NOT NULL,
+      profit NUMERIC(20, 8) NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, contract_id)
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS app_bot_trade_results_type_currency_idx
+      ON app_bot_trade_results(account_type, currency)`;
+    await sql`ALTER TABLE app_bot_trade_results ADD COLUMN IF NOT EXISTS deriv_account_id TEXT`;
+    await sql`CREATE TABLE IF NOT EXISTS app_bot_sessions (
+      user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      deriv_account_id TEXT NOT NULL,
+      account_type TEXT NOT NULL CHECK (account_type IN ('demo', 'real')),
+      currency TEXT NOT NULL,
+      starting_balance NUMERIC(20, 8) NOT NULL,
+      wins INTEGER NOT NULL DEFAULT 0 CHECK (wins >= 0),
+      losses INTEGER NOT NULL DEFAULT 0 CHECK (losses >= 0),
+      is_running BOOLEAN NOT NULL DEFAULT false,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, deriv_account_id)
+    )`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_user_assignments (
+      user_id UUID PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+      staff_user_id UUID NOT NULL REFERENCES admin_staff(user_id) ON DELETE CASCADE,
+      assigned_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      team_name TEXT,
+      region_name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_user_assignments_staff_idx ON admin_user_assignments(staff_user_id)`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_support_cases (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      description TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'waiting', 'resolved', 'closed')),
+      priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+      assigned_to UUID REFERENCES admin_staff(user_id) ON DELETE SET NULL,
+      created_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      due_at TIMESTAMPTZ
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_support_cases_queue_idx ON admin_support_cases(status, priority, due_at)`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_user_notes (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      author_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      note TEXT NOT NULL,
+      flag TEXT CHECK (flag IN ('none', 'watch', 'high_risk')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_user_notes_user_idx ON admin_user_notes(user_id, created_at DESC)`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_notifications (
+      id BIGSERIAL PRIMARY KEY,
+      recipient_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      notification_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_notifications_recipient_idx ON admin_notifications(recipient_id, created_at DESC)`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_saved_views (
+      id BIGSERIAL PRIMARY KEY,
+      owner_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      view_type TEXT NOT NULL CHECK (view_type IN ('users', 'activity', 'cases')),
+      filters JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(owner_id, view_type, name)
+    )`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_approvals (
+      id BIGSERIAL PRIMARY KEY,
+      requested_by UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      action_type TEXT NOT NULL,
+      target_user_id UUID REFERENCES app_users(id) ON DELETE CASCADE,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+      reviewed_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      review_note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      reviewed_at TIMESTAMPTZ
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS admin_approvals_status_idx ON admin_approvals(status, created_at DESC)`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_permission_reviews (
+      id BIGSERIAL PRIMARY KEY,
+      staff_user_id UUID NOT NULL REFERENCES admin_staff(user_id) ON DELETE CASCADE,
+      reviewer_id UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      due_at TIMESTAMPTZ NOT NULL,
+      reviewed_at TIMESTAMPTZ,
+      decision TEXT CHECK (decision IN ('confirmed', 'changed', 'revoked')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_settings (
+      setting_key TEXT PRIMARY KEY,
+      setting_value JSONB NOT NULL,
+      updated_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    await sql`CREATE TABLE IF NOT EXISTS admin_offboarding (
+      id BIGSERIAL PRIMARY KEY,
+      staff_user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      started_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+      checklist JSONB NOT NULL DEFAULT '{"access_revoked":false,"sessions_ended":false,"cases_reassigned":false,"review_complete":false}'::jsonb,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
   })().catch((error) => {
     schemaReady = undefined;
     throw error;

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/server/admin-auth';
+import { hasAssignedUserAccess, requireAdmin } from '@/lib/server/admin-auth';
 import { isAdminEmail, recordAppUserActivity } from '@/lib/server/app-auth';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 import { getAppUrl } from '@/lib/server/app-url';
@@ -16,6 +16,9 @@ export async function POST(_request: Request, context: { params: Promise<{ userI
       return NextResponse.json({ error: 'User ID is invalid.' }, { status: 400 });
     }
     await ensureDatabaseSchema();
+    if (!await hasAssignedUserAccess(admin!.id, role!, userId)) {
+      return NextResponse.json({ error: 'This account is outside your assigned scope.' }, { status: 403 });
+    }
     const user = await getNeonSql()`SELECT email,
       EXISTS (SELECT 1 FROM admin_staff WHERE user_id = app_users.id) AS "isStaff"
       FROM app_users WHERE id = ${userId}::uuid LIMIT 1` as Record<string, unknown>[];

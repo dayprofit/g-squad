@@ -24,9 +24,25 @@ export async function GET() {
       FROM app_users WHERE joined_at >= date_trunc('month', now()) - interval '11 months'
       GROUP BY date_trunc('month', joined_at) ORDER BY date_trunc('month', joined_at)
     ` as Record<string, unknown>[];
+    const tradeResults = await getNeonSql()`
+      SELECT account_type AS "accountType", currency,
+        SUM(CASE WHEN profit > 0 THEN profit ELSE 0 END)::text AS won,
+        SUM(CASE WHEN profit < 0 THEN -profit ELSE 0 END)::text AS lost,
+        COUNT(*)::int AS trades
+      FROM app_bot_trade_results
+      GROUP BY account_type, currency
+      ORDER BY account_type, currency
+    ` as Record<string, unknown>[];
     return NextResponse.json({
       metrics: Object.fromEntries(Object.entries(result[0] ?? {}).map(([key, value]) => [key, Number(value ?? 0)])),
       registrationsByMonth: monthly.map((row) => ({ month: String(row.month), count: Number(row.count) })),
+      tradingPerformance: tradeResults.map((row) => ({
+        accountType: String(row.accountType),
+        currency: String(row.currency),
+        won: String(row.won),
+        lost: String(row.lost),
+        trades: Number(row.trades),
+      })),
       refreshedAt: new Date().toISOString(),
     });
   } catch (error) {

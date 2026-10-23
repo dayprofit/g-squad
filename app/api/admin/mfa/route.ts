@@ -3,6 +3,7 @@ import { getCurrentAppSession, isAdminEmail, recordAppUserActivity } from '@/lib
 import { AdminMfaConfigurationError, consumeBackupCode, createBackupCodes, createTotpUri, decryptTotpSecret, encryptTotpSecret, createTotpSecret, verifyTotp } from '@/lib/server/admin-mfa';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 import { verifyPassword } from '@/lib/server/app-auth';
+import { isScheduleAllowed } from '@/lib/server/admin-auth';
 
 export const runtime = 'nodejs';
 
@@ -11,7 +12,11 @@ async function getAdminAccount(userId: string, email: string) {
     SELECT u.admin_totp_enabled AS "mfaEnabled",
       u.admin_totp_secret AS "mfaSecret",
       u.admin_totp_pending_secret AS "pendingSecret",
-      CASE WHEN ${isAdminEmail(email)} THEN 'owner' ELSE staff.role END AS role
+      CASE WHEN ${isAdminEmail(email)} THEN 'owner' ELSE staff.role END AS role,
+      staff.schedule_timezone AS "scheduleTimezone",
+      staff.work_schedule AS "workSchedule",
+      staff.role_starts_on::text AS "roleStartsOn",
+      staff.role_ends_on::text AS "roleEndsOn"
     FROM app_users u LEFT JOIN admin_staff staff ON staff.user_id = u.id
     WHERE u.id = ${userId}::uuid LIMIT 1
   ` as Record<string, unknown>[];
@@ -35,6 +40,9 @@ export async function GET() {
     await ensureDatabaseSchema();
     const account = await getAdminAccount(session.user.id, session.user.email);
     if (!account?.role) return NextResponse.json({ error: 'Admin access is not enabled.', code: 'ADMIN_ACCESS_REQUIRED' }, { status: 403 });
+    if (account.role !== 'owner' && !isScheduleAllowed(account)) {
+      return NextResponse.json({ error: 'Admin access is available only during your scheduled work hours.', code: 'ADMIN_SCHEDULE_BLOCKED' }, { status: 403 });
+    }
     return NextResponse.json({
       mfaEnabled: account.mfaEnabled === true,
       mfaVerified: Boolean(session.adminMfaVerifiedAt && Date.now() - Date.parse(session.adminMfaVerifiedAt) <= 12 * 60 * 60 * 1000),
@@ -53,6 +61,9 @@ export async function POST(request: Request) {
     await ensureDatabaseSchema();
     const account = await getAdminAccount(session.user.id, session.user.email);
     if (!account?.role) return NextResponse.json({ error: 'Admin access is not enabled.' }, { status: 403 });
+    if (account.role !== 'owner' && !isScheduleAllowed(account)) {
+      return NextResponse.json({ error: 'Admin access is available only during your scheduled work hours.', code: 'ADMIN_SCHEDULE_BLOCKED' }, { status: 403 });
+    }
     const body = await request.json();
     const action = body.action;
 

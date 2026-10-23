@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getCurrentAppSession, isAdminEmail, recordAppUserActivity, verifyPassword } from '@/lib/server/app-auth';
 import { AdminMfaConfigurationError, consumeBackupCode, decryptTotpSecret, verifyTotp } from '@/lib/server/admin-mfa';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
+import { isScheduleAllowed } from '@/lib/server/admin-auth';
 
 export const runtime = 'nodejs';
 
@@ -13,12 +14,19 @@ export async function POST(request: Request) {
     const accounts = await getNeonSql()`
       SELECT u.password_hash AS "passwordHash", u.admin_totp_enabled AS "mfaEnabled",
         u.admin_totp_secret AS "mfaSecret",
-        CASE WHEN ${isAdminEmail(session.user.email)} THEN 'owner' ELSE staff.role END AS role
+        CASE WHEN ${isAdminEmail(session.user.email)} THEN 'owner' ELSE staff.role END AS role,
+        staff.schedule_timezone AS "scheduleTimezone",
+        staff.work_schedule AS "workSchedule",
+        staff.role_starts_on::text AS "roleStartsOn",
+        staff.role_ends_on::text AS "roleEndsOn"
       FROM app_users u LEFT JOIN admin_staff staff ON staff.user_id = u.id
       WHERE u.id = ${session.user.id}::uuid LIMIT 1
     ` as Record<string, unknown>[];
     const account = accounts[0];
     if (!account?.role) return NextResponse.json({ error: 'Admin access is not enabled.' }, { status: 403 });
+    if (account.role !== 'owner' && !isScheduleAllowed(account)) {
+      return NextResponse.json({ error: 'Admin access is available only during your scheduled work hours.', code: 'ADMIN_SCHEDULE_BLOCKED' }, { status: 403 });
+    }
     const attemptRows = await getNeonSql()`SELECT COUNT(*)::int AS attempts FROM admin_auth_attempts
       WHERE user_id = ${session.user.id}::uuid AND event_type = 'reauth' AND created_at >= now() - interval '15 minutes'` as Record<string, unknown>[];
     if (Number(attemptRows[0]?.attempts ?? 0) >= 5) {

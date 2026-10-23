@@ -10,14 +10,19 @@ type StaffRole = 'support' | 'account_manager' | 'read_only';
 const staffRoles: StaffRole[] = ['support', 'account_manager', 'read_only'];
 
 export async function GET() {
-  const { user: admin, response } = await requireAdmin('staff.manage');
+  const { user: admin, role, response } = await requireAdmin('staff.manage');
   if (response) return response;
+  if (role !== 'owner') return NextResponse.json({ error: 'Only an Owner can view staff accounts.' }, { status: 403 });
   try {
     await ensureDatabaseSchema();
     const rows = await getNeonSql()`
       SELECT u.id::text AS id, u.full_name AS "fullName", u.email,
         staff.role, staff.created_at::text AS "createdAt",
-        inviter.full_name AS "invitedBy", u.admin_totp_enabled AS "mfaEnabled"
+        inviter.full_name AS "invitedBy", u.admin_totp_enabled AS "mfaEnabled",
+        staff.schedule_timezone AS "scheduleTimezone", staff.work_schedule AS "workSchedule",
+        staff.role_starts_on::text AS "roleStartsOn", staff.role_ends_on::text AS "roleEndsOn",
+        staff.permissions, staff.team_name AS "teamName", staff.region_name AS "regionName",
+        staff.temporary_access_expires_at::text AS "temporaryAccessExpiresAt"
       FROM admin_staff staff
       JOIN app_users u ON u.id = staff.user_id
       LEFT JOIN app_users inviter ON inviter.id = staff.invited_by
@@ -41,12 +46,23 @@ export async function GET() {
         ...owners.map((row) => ({
           id: String(row.id), fullName: String(row.fullName), email: String(row.email),
           role: 'owner', createdAt: String(row.createdAt), invitedBy: 'ADMIN_EMAILS',
+          schedule: { timezone: 'UTC', shifts: [], roleStartsOn: null, roleEndsOn: null },
           mfaEnabled: row.mfaEnabled === true, isOwner: true, isCurrent: String(row.id) === admin!.id,
         })),
         ...rows.map((row) => ({
           id: String(row.id), fullName: String(row.fullName), email: String(row.email),
           role: String(row.role), createdAt: String(row.createdAt),
           invitedBy: row.invitedBy ? String(row.invitedBy) : 'Owner',
+          schedule: {
+            timezone: String(row.scheduleTimezone),
+            shifts: row.workSchedule,
+            roleStartsOn: row.roleStartsOn ? String(row.roleStartsOn) : null,
+            roleEndsOn: row.roleEndsOn ? String(row.roleEndsOn) : null,
+          },
+          permissions: Array.isArray(row.permissions) ? row.permissions : null,
+          teamName: row.teamName ? String(row.teamName) : '',
+          regionName: row.regionName ? String(row.regionName) : '',
+          temporaryAccessExpiresAt: row.temporaryAccessExpiresAt ? String(row.temporaryAccessExpiresAt) : null,
           mfaEnabled: row.mfaEnabled === true, isOwner: false, isCurrent: String(row.id) === admin!.id,
         })),
       ],
@@ -62,8 +78,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const { user: admin, response } = await requireAdmin('staff.manage', { recentReauthentication: true });
+  const { user: admin, role, response } = await requireAdmin('staff.manage', { recentReauthentication: true });
   if (response) return response;
+  if (role !== 'owner') return NextResponse.json({ error: 'Only an Owner can invite staff.' }, { status: 403 });
   try {
     const body = await request.json();
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';

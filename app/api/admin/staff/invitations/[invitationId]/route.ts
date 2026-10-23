@@ -6,8 +6,9 @@ import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 export const runtime = 'nodejs';
 
 export async function DELETE(_request: Request, context: { params: Promise<{ invitationId: string }> }) {
-  const { user: admin, response } = await requireAdmin('staff.manage', { recentReauthentication: true });
+  const { user: admin, role, response } = await requireAdmin('staff.manage', { recentReauthentication: true });
   if (response) return response;
+  if (role !== 'owner') return NextResponse.json({ error: 'Only an Owner can revoke staff invitations.' }, { status: 403 });
   try {
     const { invitationId } = await context.params;
     if (!/^\d+$/.test(invitationId)) return NextResponse.json({ error: 'Invitation ID is invalid.' }, { status: 400 });

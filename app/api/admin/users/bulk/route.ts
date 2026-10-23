@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/server/admin-auth';
+import { hasAssignedUserAccess, requireAdmin } from '@/lib/server/admin-auth';
 import { isAdminEmail, recordAppUserActivity } from '@/lib/server/app-auth';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 
@@ -22,7 +22,14 @@ export async function POST(request: Request) {
     if (isSuspended && uniqueIds.includes(admin!.id)) {
       return NextResponse.json({ error: 'Bulk suspension cannot include your own account.' }, { status: 400 });
     }
+    if (!isSuspended && role !== 'owner') {
+      return NextResponse.json({ error: 'Only an Owner can request bulk account restoration.' }, { status: 403 });
+    }
     await ensureDatabaseSchema();
+    const inaccessible = await Promise.all(uniqueIds.map((userId) => hasAssignedUserAccess(admin!.id, role!, userId)));
+    if (inaccessible.some((allowed) => !allowed)) {
+      return NextResponse.json({ error: 'Every selected account must be assigned to you.' }, { status: 403 });
+    }
     if (role !== 'owner') {
       const sql = getNeonSql();
       const targetResults = await Promise.all(uniqueIds.map((userId) => sql`
@@ -32,6 +39,31 @@ export async function POST(request: Request) {
       if (targetResults.some((rows) => rows[0] && (rows[0].isStaff === true || isAdminEmail(String(rows[0].email))))) {
         return NextResponse.json({ error: 'Only an Owner can change administrator accounts.' }, { status: 403 });
       }
+    }
+    if (!isSuspended) {
+      let requested = 0;
+      let notFound = 0;
+      for (const userId of uniqueIds) {
+        const target = await getNeonSql()`SELECT is_suspended AS "isSuspended" FROM app_users WHERE id = ${userId}::uuid LIMIT 1` as Record<string, unknown>[];
+        if (!target[0]) {
+          notFound += 1;
+          continue;
+        }
+        if (target[0].isSuspended !== true) continue;
+        const approval = await getNeonSql()`INSERT INTO admin_approvals (requested_by, action_type, target_user_id)
+          SELECT ${admin!.id}::uuid, 'account.restore', ${userId}::uuid
+          WHERE NOT EXISTS (
+            SELECT 1 FROM admin_approvals WHERE target_user_id = ${userId}::uuid
+              AND action_type = 'account.restore' AND status = 'pending'
+          ) RETURNING id::text AS id` as Record<string, unknown>[];
+        if (!approval[0]) continue;
+        requested += 1;
+        await recordAppUserActivity({
+          actorUserId: admin!.id, subjectUserId: userId, eventType: 'admin.approval_requested',
+          details: { approvalId: String(approval[0].id), actionType: 'account.restore', bulk: true },
+        });
+      }
+      return NextResponse.json({ updated: 0, requested, notFound, partial: notFound > 0 });
     }
     let updated = 0;
     const missing: string[] = [];

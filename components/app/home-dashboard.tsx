@@ -71,6 +71,7 @@ export function HomeDashboard() {
   const [configurationError, setConfigurationError] = useState('');
   const [config, setConfig] = useState<TradingConfig | null>(null);
   const [isBotRunning, setIsBotRunning] = useState(false);
+  const [startingBot, setStartingBot] = useState(false);
   const [botSession, setBotSession] = useState<BotSession | null>(null);
   const [botMessage, setBotMessage] = useState('');
   const previousConnection = useRef<string | null>(null);
@@ -83,6 +84,7 @@ export function HomeDashboard() {
   const previousTradeStakeRef = useRef(0);
   const lastTradeAtRef = useRef(0);
   const activeBotContractRef = useRef<number | null>(null);
+  const activeBotTradeRef = useRef<{ accountId: string } | null>(null);
   const startingBalanceRef = useRef<number | null>(null);
   const botAccountIdRef = useRef<string | null>(null);
   const botAccountTypeRef = useRef<'demo' | 'real' | null>(null);
@@ -119,11 +121,52 @@ export function HomeDashboard() {
     setEntries((current) => [{ id: Date.now() + Math.random(), time, category, message }, ...current].slice(0, 100));
   }, []);
 
+  useEffect(() => {
+    if (!activeAccountId) {
+      setBotSession(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/trading/bot-sessions?accountId=${encodeURIComponent(activeAccountId)}`, { cache: 'no-store' })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? 'Could not load the saved bot session.');
+        if (!cancelled) setBotSession(result.session ? {
+          accountId: String(result.session.accountId),
+          startingBalance: Number(result.session.startingBalance),
+          wins: Number(result.session.wins),
+          losses: Number(result.session.losses),
+        } : null);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          addEntry('WARNING', error instanceof Error ? error.message : 'Could not load the saved bot session.');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [activeAccountId, addEntry]);
+
   const stopBot = useCallback((message: string) => {
     botRunningRef.current = false;
     setIsBotRunning(false);
     setBotMessage(message);
     addEntry('WARNING', message);
+    const accountId = botAccountIdRef.current;
+    if (accountId) {
+      void fetch('/api/trading/bot-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'stop', accountId }),
+      }).then(async (response) => {
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error ?? 'Could not save the bot session status.');
+        }
+      }).catch((error: unknown) => {
+        addEntry('WARNING', error instanceof Error ? error.message : 'Could not save the bot session status to Neon.');
+        console.error('Could not save bot session stop:', error instanceof Error ? error.message : 'Unknown error');
+      });
+    }
   }, [addEntry]);
 
   useEffect(() => {
@@ -184,6 +227,37 @@ export function HomeDashboard() {
     activeBotContractRef.current = null;
     const profit = position.sell_price - position.buy_price;
     if (!Number.isFinite(profit)) return;
+    const trade = activeBotTradeRef.current;
+    activeBotTradeRef.current = null;
+    if (trade) {
+      void (async () => {
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            const response = await fetch('/api/trading/bot-trades', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contractId,
+                accountId: trade.accountId,
+                profit,
+              }),
+            });
+            if (!response.ok) {
+              const result = await response.json();
+              throw new Error(result.error ?? 'Could not save this bot trade result.');
+            }
+            return;
+          } catch (error) {
+            if (attempt === 3) {
+              addEntry('WARNING', 'Could not save the settled bot result to admin trading totals.');
+              console.error('Could not record bot trade result:', error instanceof Error ? error.message : 'Unknown error');
+              return;
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, attempt * 1000));
+          }
+        }
+      })();
+    }
     if (profit < 0) {
       consecutiveLossesRef.current += 1;
       previousTradeStakeRef.current = Math.round(previousTradeStakeRef.current * 1.5 * 100) / 100;
@@ -200,7 +274,7 @@ export function HomeDashboard() {
     if (botRunningRef.current && consecutiveLossesRef.current >= (config?.maxConsecutiveLosses ?? Infinity)) {
       stopBot('Bot stopped after reaching the consecutive-loss limit.');
     }
-  }, [isBotRunning, trading.closedPositions, config?.stake, config?.maxConsecutiveLosses, stopBot]);
+  }, [isBotRunning, trading.closedPositions, config?.stake, config?.maxConsecutiveLosses, stopBot, addEntry]);
 
   useEffect(() => {
     if (!isBotRunning || !config || !accountConnected || !ws || !isConnected) return;
@@ -293,6 +367,7 @@ export function HomeDashboard() {
         });
         if (!buyResponse.buy?.contract_id) throw new Error('Deriv did not confirm the trade.');
         activeBotContractRef.current = buyResponse.buy.contract_id;
+        activeBotTradeRef.current = { accountId: account.account_id };
         previousTradeStakeRef.current = stake;
         tradeCountRef.current += 1;
         lastTradeAtRef.current = Date.now();
@@ -347,7 +422,7 @@ export function HomeDashboard() {
   const demoAccountOption = auth.accounts.find((account) => account.account_type === 'demo');
   const realAccountOption = auth.accounts.find((account) => account.account_type === 'real');
 
-  function startBot() {
+  async function startBot() {
     if (!accountConnected || !activeAccount || !config || !isConnected || !ws) return;
     if (activeAccount.account_type === 'real' && !window.confirm(
       'Real-money trading warning\n\nThe bot will place automated trades using real funds in your selected Deriv account. Losses are possible. Confirm you want to start real-account automation?'
@@ -366,6 +441,33 @@ export function HomeDashboard() {
     }
     if (!Number.isFinite(Number(activeAccount.balance))) {
       setBotMessage('The selected account balance is unavailable.');
+      return;
+    }
+    setStartingBot(true);
+    try {
+      const response = await fetch('/api/trading/bot-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'start',
+          accountId: activeAccount.account_id,
+          accountType: activeAccount.account_type,
+          currency: activeAccount.currency,
+          startingBalance: Number(activeAccount.balance),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.session) throw new Error(result.error ?? 'Could not save the bot session to Neon.');
+      setBotSession({
+        accountId: String(result.session.accountId),
+        startingBalance: Number(result.session.startingBalance),
+        wins: Number(result.session.wins),
+        losses: Number(result.session.losses),
+      });
+    } catch (error) {
+      setBotMessage(error instanceof Error ? error.message : 'Could not save the bot session to Neon.');
+      addEntry('WARNING', error instanceof Error ? error.message : 'Could not save the bot session to Neon.');
+      setStartingBot(false);
       return;
     }
     processingSignalRef.current = false;
@@ -388,6 +490,7 @@ export function HomeDashboard() {
     setBotMessage(`Bot is scanning the selected ${activeAccount.account_type} account. It will wait for a fresh market signal before its first trade.`);
     setIsBotRunning(true);
     addEntry('INFO', `${activeAccount.account_type === 'real' ? 'Real-money' : 'Demo'} automated trading started. Waiting for a fresh market signal.`);
+    setStartingBot(false);
   }
 
   function stopBotManually() {
@@ -425,7 +528,7 @@ export function HomeDashboard() {
         <div className="gq-card-heading"><div className="gq-section-icon gq-section-icon-dark"><Bot size={18} /></div><div><h2>Automatic trading</h2><p>Fixed market · {FIXED_TRADING_SYMBOL_NAME}</p></div><span className={`gq-state-tag ${isBotRunning ? 'is-online' : 'is-unavailable'}`}>{isBotRunning ? 'RUNNING' : 'STOPPED'}</span></div>
         <div className="gq-worker-warning"><AlertTriangle size={16} /><p>Real-account trades use real funds. Confirm before starting on Real. This bot runs only while this page stays open; errors or account changes stop it.</p></div>
         <div className="gq-bot-actions">
-          <button className="gq-primary-button" type="button" onClick={startBot} disabled={isBotRunning || !accountConnected || !config || !isConnected || !ws}><Play size={16} fill="currentColor" />Start {activeAccount?.account_type === 'real' ? 'real' : 'demo'} bot</button>
+          <button className="gq-primary-button" type="button" onClick={() => void startBot()} disabled={startingBot || isBotRunning || !accountConnected || !config || !isConnected || !ws}><Play size={16} fill="currentColor" />{startingBot ? 'Saving session…' : `Start ${activeAccount?.account_type === 'real' ? 'real' : 'demo'} bot`}</button>
           <button className="gq-secondary-button" type="button" onClick={stopBotManually} disabled={!isBotRunning}><Pause size={16} />Stop</button>
         </div>
         {(botMessage || configurationError || (!config && !configurationError)) && <p className="gq-footnote" role={configurationError ? 'alert' : 'status'}>{configurationError || botMessage || 'Save bot settings before starting.'}</p>}

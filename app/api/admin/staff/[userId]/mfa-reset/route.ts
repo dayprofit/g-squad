@@ -6,9 +6,9 @@ import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 export const runtime = 'nodejs';
 
 export async function POST(_request: Request, context: { params: Promise<{ userId: string }> }) {
-  const { user: admin, response } = await requireAdmin('staff.manage', { recentReauthentication: true });
+  const { user: admin, role, response } = await requireAdmin('staff.manage', { recentReauthentication: true });
   if (response) return response;
-  if (admin!.adminRole !== 'owner') return NextResponse.json({ error: 'Only an owner can reset staff MFA.' }, { status: 403 });
+  if (role !== 'owner') return NextResponse.json({ error: 'Only an owner can request an MFA reset.' }, { status: 403 });
   try {
     const { userId } = await context.params;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId)) {
@@ -22,18 +22,18 @@ export async function POST(_request: Request, context: { params: Promise<{ userI
     if (!target[0] || (target[0].isStaff !== true && !isAdminEmail(String(target[0].email)))) {
       return NextResponse.json({ error: 'Administrator was not found.' }, { status: 404 });
     }
-    const rows = await getNeonSql()`UPDATE app_users SET admin_totp_enabled = false,
-      admin_totp_secret = NULL, admin_totp_pending_secret = NULL,
-      admin_totp_last_step = NULL, admin_totp_backup_codes = '[]'::jsonb
-      WHERE id = ${userId}::uuid
+    const pending = await getNeonSql()`SELECT 1 FROM admin_approvals
+      WHERE requested_by = ${admin!.id}::uuid AND target_user_id = ${userId}::uuid
+        AND action_type = 'staff.mfa_reset' AND status = 'pending' LIMIT 1` as Record<string, unknown>[];
+    if (pending[0]) return NextResponse.json({ error: 'An MFA-reset approval is already pending for this administrator.' }, { status: 409 });
+    const rows = await getNeonSql()`INSERT INTO admin_approvals (requested_by, action_type, target_user_id)
+      VALUES (${admin!.id}::uuid, 'staff.mfa_reset', ${userId}::uuid)
       RETURNING id::text AS id` as Record<string, unknown>[];
-    if (!rows[0]) return NextResponse.json({ error: 'Staff member was not found.' }, { status: 404 });
-    await getNeonSql()`UPDATE app_sessions SET admin_mfa_verified_at = NULL, admin_reauthenticated_at = NULL
-      WHERE user_id = ${userId}::uuid`;
     await recordAppUserActivity({
-      actorUserId: admin!.id, subjectUserId: userId, eventType: 'admin.staff_mfa_reset',
+      actorUserId: admin!.id, subjectUserId: userId, eventType: 'admin.approval_requested',
+      details: { approvalId: String(rows[0].id), actionType: 'staff.mfa_reset' },
     });
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ approvalId: String(rows[0].id), status: 'pending' }, { status: 202 });
   } catch (error) {
     console.error('Admin staff MFA reset failed:', error instanceof Error ? error.message : 'Unknown error');
     return NextResponse.json({ error: 'Could not reset staff MFA.' }, { status: 503 });

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/server/admin-auth';
+import { hasAssignedUserAccess, requireAdmin } from '@/lib/server/admin-auth';
 import { getCurrentAppSession, isAdminEmail, recordAppUserActivity } from '@/lib/server/app-auth';
 import { ensureDatabaseSchema, getNeonSql } from '@/lib/server/neon';
 
@@ -14,6 +14,9 @@ export async function DELETE(_request: Request, context: { params: Promise<{ use
     if (!uuidPattern.test(userId)) return NextResponse.json({ error: 'User ID is invalid.' }, { status: 400 });
     const session = await getCurrentAppSession();
     await ensureDatabaseSchema();
+    if (!await hasAssignedUserAccess(admin!.id, role!, userId)) {
+      return NextResponse.json({ error: 'This account is outside your assigned scope.' }, { status: 403 });
+    }
     const target = await getNeonSql()`SELECT email,
       EXISTS (SELECT 1 FROM admin_staff WHERE user_id = app_users.id) AS "isStaff"
       FROM app_users WHERE id = ${userId}::uuid LIMIT 1` as Record<string, unknown>[];

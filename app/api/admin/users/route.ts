@@ -9,7 +9,7 @@ import { validateTradingConfig } from '@/lib/trading-config';
 export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
-  const { response } = await requireAdmin('users.read');
+  const { user: admin, role, response } = await requireAdmin('users.read');
   if (response) return response;
   try {
     const params = new URL(request.url).searchParams;
@@ -26,13 +26,21 @@ export async function GET(request: Request) {
         u.trading_config AS "tradingConfig", staff.role AS "adminRole",
         (staff.user_id IS NOT NULL) AS "isStaff"
       FROM app_users u LEFT JOIN admin_staff staff ON staff.user_id = u.id
-      WHERE ${search === ''} OR u.full_name ILIKE ${pattern} OR u.email ILIKE ${pattern} OR u.account_id ILIKE ${pattern}
+      WHERE (${role === 'owner'} OR EXISTS (
+        SELECT 1 FROM admin_user_assignments assignment
+        WHERE assignment.user_id = u.id AND assignment.staff_user_id = ${admin!.id}::uuid
+      ))
+        AND (${search === ''} OR u.full_name ILIKE ${pattern} OR u.email ILIKE ${pattern} OR u.account_id ILIKE ${pattern})
       ORDER BY u.joined_at DESC
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
     `, sql`
       SELECT COUNT(*)::int AS total
-      FROM app_users
-      WHERE ${search === ''} OR full_name ILIKE ${pattern} OR email ILIKE ${pattern} OR account_id ILIKE ${pattern}
+      FROM app_users u
+      WHERE (${role === 'owner'} OR EXISTS (
+        SELECT 1 FROM admin_user_assignments assignment
+        WHERE assignment.user_id = u.id AND assignment.staff_user_id = ${admin!.id}::uuid
+      ))
+        AND (${search === ''} OR full_name ILIKE ${pattern} OR email ILIKE ${pattern} OR account_id ILIKE ${pattern})
     `]) as [Record<string, unknown>[], Record<string, unknown>[]];
     return NextResponse.json({
       total: Number(countResult[0]?.total ?? 0),
@@ -59,7 +67,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { user: admin, response } = await requireAdmin('users.create', { recentReauthentication: true });
+  const { user: admin, role, response } = await requireAdmin('users.create', { recentReauthentication: true });
   if (response) return response;
   try {
     const body = await request.json();
@@ -74,6 +82,12 @@ export async function POST(request: Request) {
     const resetToken = randomBytes(32).toString('base64url');
     const resetHash = createHash('sha256').update(resetToken).digest('hex');
     await ensureDatabaseSchema();
+    if (role !== 'owner') {
+      await getNeonSql()`INSERT INTO admin_user_assignments (user_id, staff_user_id, assigned_by)
+        VALUES (${created.id}::uuid, ${admin!.id}::uuid, ${admin!.id}::uuid)
+        ON CONFLICT (user_id) DO UPDATE SET staff_user_id = EXCLUDED.staff_user_id,
+          assigned_by = EXCLUDED.assigned_by, updated_at = now()`;
+    }
     await getNeonSql()`INSERT INTO app_password_resets (token_hash, user_id, expires_at)
       VALUES (${resetHash}, ${created.id}::uuid, now() + interval '1 hour')`;
     await recordAppUserActivity({
