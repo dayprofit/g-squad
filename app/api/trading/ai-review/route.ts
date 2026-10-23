@@ -82,6 +82,7 @@ export async function POST(request: Request) {
 
     const baseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
     const model = process.env.OLLAMA_MODEL || 'qwen3:8b';
+    const apiKey = process.env.OLLAMA_API_KEY;
     const endpoint = new URL('/api/chat', baseUrl);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45_000);
@@ -89,7 +90,10 @@ export async function POST(request: Request) {
     try {
       response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
         body: JSON.stringify({
           model,
           stream: false,

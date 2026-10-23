@@ -22,8 +22,9 @@ NEXT_PUBLIC_DERIV_APP_NAME=G-squad
 NEXT_PUBLIC_DERIV_OAUTH_SCOPES=trade
 NEXT_PUBLIC_DERIV_ENV=production
 
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=qwen3:8b
+OLLAMA_BASE_URL=https://ollama.com
+OLLAMA_API_KEY=your-ollama-api-key
+OLLAMA_MODEL=your-cloud-model-name
 ```
 
 Generate the encryption key with `openssl rand -base64 32`. Never use a `NEXT_PUBLIC_` prefix for database credentials, the encryption key, or Deriv tokens. Do not commit `.env.local` or production secrets. The database role needs permission to create tables and indexes and to read/write application data.
@@ -47,7 +48,9 @@ Open `http://localhost:3000`. Registration, login, saved trading configuration, 
 
 ### Local AI trade approval
 
-Install Ollama on the same host/container network as the Next.js server, then download the default model with `ollama pull qwen3:8b`. Set `OLLAMA_BASE_URL` to the Ollama server URL reachable **from the Next.js server** and `OLLAMA_MODEL` to an installed model. When the dashboard bot is running, its internal signal detector submits a candidate and recent live ticks to the authenticated server-side Ollama review. Only an `approve` response proceeds to a Deriv demo proposal and order; rejects are skipped, and unavailable, timed-out, or invalid responses stop the bot without placing an order. Ollama is not exposed as a user-facing strategy control. A deployed app cannot reach Ollama on a user's computer through `127.0.0.1`; host Ollama alongside the server or configure a private network endpoint.
+For Ollama Cloud, create an API key in your Ollama account and set `OLLAMA_BASE_URL=https://ollama.com`, `OLLAMA_API_KEY` to that key, and `OLLAMA_MODEL` to a cloud model name available to your account. The server sends the key only in the backend Authorization header; never use a `NEXT_PUBLIC_` prefix or expose it in browser code. For local Ollama instead, use `OLLAMA_BASE_URL=http://127.0.0.1:11434`, leave `OLLAMA_API_KEY` empty, and ensure the selected model has been pulled locally. When the dashboard bot is running, its internal signal detector submits a candidate and recent live ticks to the authenticated server-side Ollama review. Only an `approve` response proceeds to a Deriv demo proposal and order; rejects are skipped, and unavailable, timed-out, or invalid responses stop the bot without placing an order. Ollama is not exposed as a user-facing strategy control.
+
+On Vercel, add `OLLAMA_BASE_URL`, `OLLAMA_API_KEY`, and `OLLAMA_MODEL` in **Project → Settings → Environment Variables**, for each environment you use (Production, Preview, or Development), then redeploy. Ollama Cloud is reachable from Vercel; a local `127.0.0.1` Ollama server is not.
 
 ## Build and deploy
 
