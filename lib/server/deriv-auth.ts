@@ -230,6 +230,17 @@ export async function loadDerivSession(userId: string): Promise<{ accounts: Deri
   return { accounts, activeAccountId: selected.account_id, wsUrl: await getOTP(auth.token, selected.account_id) };
 }
 
+export async function requireActiveDemoAccount(userId: string): Promise<void> {
+  const auth = await getAccessToken(userId);
+  if (!auth) throw new Error('Connect a Deriv demo account first.');
+  const accountId = await getActiveAccountId(userId);
+  const accounts = await listAccounts(auth.token);
+  const selected = accounts.find((account) => account.account_id === accountId);
+  if (!selected || selected.account_type !== 'demo') {
+    throw new Error('Automated trading is restricted to a selected Deriv demo account.');
+  }
+}
+
 export async function switchDerivAccount(userId: string, accountId: string): Promise<{ accounts: DerivAccount[]; activeAccountId: string; wsUrl: string }> {
   const auth = await getAccessToken(userId);
   if (!auth) throw new Error('Connect a Deriv account first.');

@@ -57,7 +57,7 @@ export function ConfigureScreen({ onNotice }: { onNotice: (message: string) => v
       const remaining = Math.max(0, 5000 - (Date.now() - startedAt));
       if (remaining) await new Promise((resolve) => setTimeout(resolve, remaining));
       setConfig({ ...DEFAULT_CONFIG, ...result.config });
-      onNotice('Configuration saved. It will not start trading until a worker is deployed.');
+      onNotice('Settings saved. Start the demo bot from Home; it runs only while that page stays open.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Configuration could not be saved.');
     } finally { setSaving(false); }
@@ -72,15 +72,14 @@ export function ConfigureScreen({ onNotice }: { onNotice: (message: string) => v
           <NumberField label="Stake amount" prefix={currency} value={config.stake} min={0.01} max={10000} step={0.01} onChange={(value) => update('stake', value)} />
           <div className="gq-field-pair"><NumberField label="Target profit" prefix={currency} value={config.targetProfit} min={0.01} max={1000000} step={0.01} onChange={(value) => update('targetProfit', value)} /><NumberField label="Target loss" prefix={currency} value={config.targetLoss} min={0.01} max={1000000} step={0.01} onChange={(value) => update('targetLoss', value)} /></div>
         </section>
-        <section className="gq-card gq-config-card"><SectionTitle index="02" title="Strategy" subtitle="Choose which signal models are enabled." />
-          <div className="gq-segmented" role="group" aria-label="Strategy">{(['breakout', 'reversal', 'both'] as const).map((strategy) => <button key={strategy} type="button" className={config.strategy === strategy ? 'is-selected' : ''} onClick={() => update('strategy', strategy)}>{strategy === 'breakout' ? 'Breakout' : strategy === 'reversal' ? 'Reversal' : 'Both'}</button>)}</div>
+        <section className="gq-card gq-config-card"><SectionTitle index="02" title="Trade setup" subtitle="Choose the market and contract duration." />
           <label className="gq-field"><span>Market</span><select value={config.symbol} onChange={(event) => update('symbol', event.target.value)}>{SYMBOLS.map((symbol) => <option key={symbol}>{symbol}</option>)}</select></label>
           <div className="gq-field-pair"><NumberField label="Contract duration" value={config.duration} min={1} max={10000} step={1} onChange={(value) => update('duration', value)} /><label className="gq-field"><span>Duration unit</span><select value={config.durationUnit} onChange={(event) => update('durationUnit', event.target.value as TradingConfig['durationUnit'])}><option value="t">Ticks</option><option value="s">Seconds</option><option value="m">Minutes</option></select></label></div>
         </section>
         <section className="gq-card gq-config-card"><SectionTitle index="03" title="Trade safeguards" subtitle="Session caps prevent unlimited entries." />
           <div className="gq-field-pair"><NumberField label="Maximum trades" value={config.maxTrades} min={1} max={500} step={1} onChange={(value) => update('maxTrades', value)} /><NumberField label="Consecutive losses" value={config.maxConsecutiveLosses} min={1} max={50} step={1} onChange={(value) => update('maxConsecutiveLosses', value)} /></div>
           <NumberField label="Loss cooldown (minutes)" value={config.cooldownMinutes} min={0} max={1440} step={1} onChange={(value) => update('cooldownMinutes', value)} />
-          <div className="gq-risk-note">{currency ? `Amounts use ${currency}.` : 'Connect Deriv to see your account currency.'} Settings are saved to your application account. Enforcement requires a deployed trading worker.</div>
+          <div className="gq-risk-note">{currency ? `Amounts use ${currency}.` : 'Connect Deriv to see your account currency.'} The bot is demo-only and stops if its dashboard page closes.</div>
         </section>
         <button className="gq-primary-button gq-save-button" type="submit" disabled={loading || saving || !valid}><Save size={17} />Save configuration</button>
       </form>

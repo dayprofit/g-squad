@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Bot, Link2, Pause, Play, Wallet } from 'lucide-react';
+import { useTicks } from '@deriv/core';
+import type { BuyResponse, ProposalResponse } from '@deriv/core';
 import { useDerivWSContext } from '@/components/custom/deriv-ws-provider';
 import { useBaseTrading } from '@/hooks/use-base-trading';
 
@@ -10,6 +12,19 @@ interface ConsoleEntry {
   time: string;
   category: 'INFO' | 'SUCCESS' | 'WARNING' | 'TRADE';
   message: string;
+}
+
+interface TradingConfig {
+  stake: number;
+  targetProfit: number;
+  targetLoss: number;
+  strategy: 'breakout' | 'reversal' | 'both';
+  symbol: string;
+  duration: number;
+  durationUnit: 't' | 's' | 'm';
+  maxTrades: number;
+  maxConsecutiveLosses: number;
+  cooldownMinutes: number;
 }
 
 function money(value: number, currency?: string): string {
@@ -21,19 +36,80 @@ function money(value: number, currency?: string): string {
   }
 }
 
+function findCandidate(prices: number[]): 'CALL' | 'PUT' | null {
+  if (prices.length < 21) return null;
+  const history = prices.slice(-21, -1);
+  const current = prices[prices.length - 1];
+  const moves = history.slice(1).map((price, index) => Math.abs(price - history[index]));
+  const volatility = moves.reduce((sum, move) => sum + move, 0) / moves.length;
+  if (!Number.isFinite(volatility) || volatility <= 0) return null;
+  const high = Math.max(...history);
+  const low = Math.min(...history);
+  const threshold = volatility * 1.5;
+  if (current > high + threshold) return 'CALL';
+  if (current < low - threshold) return 'PUT';
+  return null;
+}
+
 export function HomeDashboard() {
   const { ws, isConnected, isExhausted, auth } = useDerivWSContext();
-  const { authState, activeAccount, login, logout } = auth;
+  const { authState, activeAccount, activeAccountId, login, logout } = auth;
   const trading = useBaseTrading({ ws, isConnected, isExhausted, isAuthenticated: !!auth.wsUrl, onAuthWSFailed: () => { void logout(); }, contractTypes: ['CALL', 'PUT'] });
+  const { prices } = useTicks(ws, isConnected, trading.activeSymbol, 60);
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
   const [connectError, setConnectError] = useState('');
+  const [configurationError, setConfigurationError] = useState('');
+  const [config, setConfig] = useState<TradingConfig | null>(null);
+  const [isBotRunning, setIsBotRunning] = useState(false);
+  const [botMessage, setBotMessage] = useState('');
   const previousConnection = useRef<string | null>(null);
   const previousLatestSettlement = useRef<number | null>(null);
+  const botRunningRef = useRef(false);
+  const processingSignalRef = useRef(false);
+  const lastCandidateRef = useRef<'CALL' | 'PUT' | null>(null);
+  const tradeCountRef = useRef(0);
+  const consecutiveLossesRef = useRef(0);
+  const lastTradeAtRef = useRef(0);
+  const startingBalanceRef = useRef<number | null>(null);
+  const botAccountIdRef = useRef<string | null>(null);
+  const lastBotSettlementRef = useRef<number | null>(null);
+  const currentAccountRef = useRef(activeAccount);
+  const currentAccountIdRef = useRef(activeAccountId);
+  const currentConnectionRef = useRef({ ws, isConnected });
+  const currentPricesRef = useRef(prices);
+  currentAccountRef.current = activeAccount;
+  currentAccountIdRef.current = activeAccountId;
+  currentConnectionRef.current = { ws, isConnected };
+  currentPricesRef.current = prices;
+
+  const accountConnected = !!auth.wsUrl && isConnected && !!activeAccount;
+  const demoAccount = accountConnected && activeAccount.account_type === 'demo';
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/trading/config', { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error ?? 'Could not load trading configuration.');
+        if (!cancelled && payload.config) setConfig(payload.config as TradingConfig);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setConfigurationError(error instanceof Error ? error.message : 'Could not load trading configuration.');
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const addEntry = useCallback((category: ConsoleEntry['category'], message: string) => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
     setEntries((current) => [{ id: Date.now() + Math.random(), time, category, message }, ...current].slice(0, 100));
   }, []);
+
+  const stopBot = useCallback((message: string) => {
+    botRunningRef.current = false;
+    setIsBotRunning(false);
+    setBotMessage(message);
+    addEntry('WARNING', message);
+  }, [addEntry]);
 
   useEffect(() => {
     const state = auth.wsUrl ? (isConnected ? 'connected' : 'connecting') : 'disconnected';
@@ -52,17 +128,178 @@ export function HomeDashboard() {
     if (latestId !== null) previousLatestSettlement.current = latestId;
   }, [trading.closedPositions, addEntry]);
 
+  useEffect(() => {
+    if (!isBotRunning) return;
+    if (!accountConnected || activeAccount?.account_type !== 'demo' || activeAccountId !== botAccountIdRef.current) {
+      stopBot('Bot stopped because its demo account connection changed.');
+    }
+  }, [isBotRunning, accountConnected, activeAccount?.account_type, activeAccountId, stopBot]);
+
+  useEffect(() => {
+    if (!isBotRunning || !activeAccount || startingBalanceRef.current === null) return;
+    const balance = Number(activeAccount.balance);
+    if (!Number.isFinite(balance)) {
+      stopBot('Bot stopped because the account balance could not be verified.');
+      return;
+    }
+    const change = balance - startingBalanceRef.current;
+    if (change >= (config?.targetProfit ?? Infinity)) stopBot('Bot stopped at the configured profit limit.');
+    else if (change <= -(config?.targetLoss ?? Infinity)) stopBot('Bot stopped at the configured loss limit.');
+  }, [isBotRunning, activeAccount?.balance, activeAccount, config?.targetProfit, config?.targetLoss, stopBot]);
+
+  useEffect(() => {
+    if (!isBotRunning) return;
+    const latest = trading.closedPositions[0];
+    if (!latest || latest.contract_id === lastBotSettlementRef.current) return;
+    const priorIndex = trading.closedPositions.findIndex((position) => position.contract_id === lastBotSettlementRef.current);
+    if (lastBotSettlementRef.current !== null && priorIndex < 0) {
+      lastBotSettlementRef.current = latest.contract_id;
+      return;
+    }
+    const settled = lastBotSettlementRef.current === null ? [latest] : trading.closedPositions.slice(0, priorIndex).reverse();
+    for (const position of settled) {
+      const profit = position.sell_price - position.buy_price;
+      consecutiveLossesRef.current = profit < 0 ? consecutiveLossesRef.current + 1 : 0;
+      lastBotSettlementRef.current = position.contract_id;
+      if (consecutiveLossesRef.current >= (config?.maxConsecutiveLosses ?? Infinity)) {
+        stopBot('Bot stopped after reaching the consecutive-loss limit.');
+        return;
+      }
+    }
+  }, [isBotRunning, trading.closedPositions, config?.maxConsecutiveLosses, stopBot]);
+
+  useEffect(() => {
+    if (!isBotRunning || !config || !demoAccount || !ws || !isConnected) return;
+    if (trading.activeSymbol?.underlying_symbol !== config.symbol) return;
+    const direction = findCandidate(prices);
+    if (!direction) {
+      lastCandidateRef.current = null;
+      return;
+    }
+    if (lastCandidateRef.current === direction || processingSignalRef.current) return;
+    lastCandidateRef.current = direction;
+
+    const reviewAndTrade = async () => {
+      processingSignalRef.current = true;
+      try {
+        const response = await fetch('/api/trading/ai-review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbol: config.symbol, direction, prices: prices.slice(-60) }),
+        });
+        const review = await response.json();
+        if (!response.ok) throw new Error(review.error ?? 'Automated review could not be completed.');
+        if (review.decision !== 'approve') {
+          addEntry('INFO', 'A trade candidate was rejected by the automated review.');
+          return;
+        }
+
+        const connection = currentConnectionRef.current;
+        const account = currentAccountRef.current;
+        if (
+          !botRunningRef.current ||
+          !connection.isConnected ||
+          !connection.ws ||
+          !account ||
+          account.account_type !== 'demo' ||
+          account.account_id !== botAccountIdRef.current ||
+          currentAccountIdRef.current !== botAccountIdRef.current ||
+          findCandidate(currentPricesRef.current) !== direction
+        ) return;
+        if (tradeCountRef.current >= config.maxTrades) {
+          stopBot('Bot stopped after reaching the maximum trade count.');
+          return;
+        }
+        if (Date.now() - lastTradeAtRef.current < config.cooldownMinutes * 60_000) return;
+
+        const proposalResponse = await connection.ws.send<ProposalResponse>({
+          proposal: 1,
+          amount: config.stake,
+          basis: 'stake',
+          contract_type: direction,
+          currency: account.currency,
+          underlying_symbol: config.symbol,
+          duration: config.duration,
+          duration_unit: config.durationUnit,
+        });
+        const proposal = proposalResponse.proposal;
+        if (!proposal?.id || !Number.isFinite(proposal.ask_price) || proposal.ask_price <= 0) {
+          throw new Error('Deriv returned an invalid trade proposal.');
+        }
+
+        const latestConnection = currentConnectionRef.current;
+        const latestAccount = currentAccountRef.current;
+        if (
+          !botRunningRef.current ||
+          !latestConnection.isConnected ||
+          latestConnection.ws !== connection.ws ||
+          latestAccount?.account_type !== 'demo' ||
+          latestAccount.account_id !== botAccountIdRef.current ||
+          currentAccountIdRef.current !== botAccountIdRef.current ||
+          findCandidate(currentPricesRef.current) !== direction
+        ) return;
+
+        const buyResponse = await connection.ws.send<BuyResponse>({
+          buy: proposal.id,
+          price: String(proposal.ask_price),
+        });
+        if (!buyResponse.buy?.contract_id) throw new Error('Deriv did not confirm the demo trade.');
+        tradeCountRef.current += 1;
+        lastTradeAtRef.current = Date.now();
+        addEntry('SUCCESS', 'AI-approved demo trade placed.');
+        if (tradeCountRef.current >= config.maxTrades) stopBot('Bot stopped after reaching the maximum trade count.');
+      } catch (error) {
+        console.error('Automated demo trading stopped:', error instanceof Error ? error.message : 'Unknown error');
+        stopBot('Bot stopped because a trade review or order could not be completed.');
+      } finally {
+        processingSignalRef.current = false;
+      }
+    };
+    void reviewAndTrade();
+  }, [isBotRunning, config, demoAccount, ws, isConnected, trading.activeSymbol?.underlying_symbol, prices, addEntry, stopBot]);
+
+  useEffect(() => () => {
+    botRunningRef.current = false;
+  }, []);
+
   const closed = trading.closedPositions;
   const wins = closed.filter((position) => position.sell_price - position.buy_price > 0).length;
   const losses = closed.filter((position) => position.sell_price - position.buy_price < 0).length;
   const resolved = wins + losses;
   const profitLoss = closed.reduce((total, position) => total + position.sell_price - position.buy_price, 0);
-  const accountConnected = !!auth.wsUrl && isConnected && !!activeAccount;
 
   async function connectDeriv() {
     setConnectError('');
     try { await login(); }
     catch (error) { setConnectError(error instanceof Error ? error.message : 'Could not connect to Deriv.'); }
+  }
+
+  function startBot() {
+    if (!demoAccount || !activeAccount || !config || !isConnected || !ws) return;
+    if (trading.activeSymbol?.underlying_symbol !== config.symbol) {
+      setBotMessage('Select the configured market before starting.');
+      return;
+    }
+    if (!Number.isFinite(Number(activeAccount.balance))) {
+      setBotMessage('The demo account balance is unavailable.');
+      return;
+    }
+    processingSignalRef.current = false;
+    lastCandidateRef.current = null;
+    tradeCountRef.current = 0;
+    consecutiveLossesRef.current = 0;
+    lastTradeAtRef.current = 0;
+    startingBalanceRef.current = Number(activeAccount.balance);
+    botAccountIdRef.current = activeAccount.account_id;
+    lastBotSettlementRef.current = trading.closedPositions[0]?.contract_id ?? null;
+    botRunningRef.current = true;
+    setBotMessage('Bot is running on the selected demo account. Keep this page open.');
+    setIsBotRunning(true);
+    addEntry('INFO', 'Demo-only automated trading started.');
+  }
+
+  function stopBotManually() {
+    stopBot('Automated trading stopped.');
   }
 
   return (
@@ -82,10 +319,15 @@ export function HomeDashboard() {
         {(connectError || auth.error) && <p className="gq-inline-error" role="alert">{connectError || auth.error}</p>}
       </section>
       <section className="gq-card gq-bot-card">
-        <div className="gq-card-heading"><div className="gq-section-icon gq-section-icon-dark"><Bot size={18} /></div><div><h2>Automatic trading</h2><p>Volatility Breakout · Reversal</p></div><span className="gq-state-tag is-unavailable">UNAVAILABLE</span></div>
-        <div className="gq-worker-warning"><AlertTriangle size={16} /><p>No persistent trading worker is deployed. Automation is disabled; no trades will be placed.</p></div>
-        <div className="gq-bot-actions"><button className="gq-primary-button" type="button" disabled title="A server trading worker must be deployed first"><Play size={16} fill="currentColor" />Start</button><button className="gq-secondary-button" type="button" disabled title="No bot session is running"><Pause size={16} />Stop</button></div>
-        <p className="gq-footnote">{accountConnected ? `Market: ${trading.activeSymbol?.underlying_symbol ?? 'loading'}` : 'Connect a Deriv account to view market details.'}</p>
+        <div className="gq-card-heading"><div className="gq-section-icon gq-section-icon-dark"><Bot size={18} /></div><div><h2>Automatic trading</h2><p>AI-assisted demo automation</p></div><span className={`gq-state-tag ${isBotRunning ? 'is-online' : 'is-unavailable'}`}>{isBotRunning ? 'RUNNING' : 'STOPPED'}</span></div>
+        <div className="gq-worker-warning"><AlertTriangle size={16} /><p>Demo accounts only. Every trade requires automated review. This bot runs only while this page stays open; any error stops it.</p></div>
+        <div className="gq-bot-actions">
+          <button className="gq-primary-button" type="button" onClick={startBot} disabled={isBotRunning || !demoAccount || !config || !isConnected || !ws}><Play size={16} fill="currentColor" />Start</button>
+          <button className="gq-secondary-button" type="button" onClick={stopBotManually} disabled={!isBotRunning}><Pause size={16} />Stop</button>
+        </div>
+        {(botMessage || configurationError || (!config && !configurationError)) && <p className="gq-footnote" role={configurationError ? 'alert' : 'status'}>{configurationError || botMessage || 'Save bot settings before starting.'}</p>}
+        {config && trading.activeSymbol && trading.activeSymbol.underlying_symbol !== config.symbol && <p className="gq-footnote">Select the configured market in Settings before starting the bot.</p>}
+        <p className="gq-footnote">{accountConnected ? `Market: ${trading.activeSymbol?.underlying_symbol ?? 'loading'}` : 'Connect a Deriv demo account to enable automation.'}</p>
       </section>
       <section className="gq-card gq-console-card">
         <div className="gq-console-heading"><div><h2>Activity console</h2><p>Newest events first</p></div><span><Activity size={14} />{entries.length} EVENTS</span></div>

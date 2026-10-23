@@ -129,6 +129,7 @@ button { color: inherit; }
 .gq-live-pill { gap: 6px; padding: 6px 8px; border: 1px solid #dcebe1; border-radius: 99px; color: #447357; font-size: 9px; font-weight: 750; letter-spacing: .45px; }
 .gq-live-pill > span { width: 6px; height: 6px; border-radius: 50%; background: #39a36a; }
 .gq-state-tag { flex: 0 0 auto; min-height: 24px; padding: 0 7px; border-radius: 5px; background: #f1f1ef; color: #777c73; font-size: 8px; font-weight: 800; }
+.gq-state-tag.is-online { background: #e3f5ea; color: #267345; }
 .gq-worker-warning { align-items: flex-start; gap: 9px; margin: 15px 0 12px; padding: 11px; border: 1px solid #f1e3b7; border-radius: 8px; background: #fff9e6; color: #765d09; }
 .gq-worker-warning svg { flex: 0 0 auto; margin-top: 1px; }
 .gq-worker-warning p { margin: 0; font-size: 11px; line-height: 1.5; }
