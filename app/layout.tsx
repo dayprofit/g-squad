@@ -9,10 +9,19 @@ import './bot.css';
 
 export function generateMetadata(): Metadata {
   const faviconUri = buildFaviconUri();
+  const appName = process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'G-squad';
   return {
-    title: process.env.NEXT_PUBLIC_DERIV_APP_NAME?.trim() || 'G-squad Trading Workspace',
+    title: `${appName} Trading Workspace`,
     description: 'Mobile trading workspace with separate application and Deriv accounts',
-    ...(faviconUri ? { icons: { icon: faviconUri } } : {}),
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: 'black-translucent',
+      title: appName,
+    },
+    icons: {
+      ...(faviconUri ? { icon: faviconUri } : {}),
+      apple: '/apple-touch-icon.png',
+    },
   };
 }
 

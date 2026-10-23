@@ -72,6 +72,10 @@ npm run dev
 
 Open `http://localhost:3000`. Registration, login, saved trading configuration, and Deriv account connection require a reachable Neon database. Deriv account connection also requires a valid public app ID and matching registered redirect URI.
 
+## Install on a device
+
+Deploy the app to an HTTPS domain, then open it in the device's browser and choose **Install app**. On iPhone/iPad, open the site in Safari, tap **Share → Add to Home Screen → Add**. Launch G-squad from the home-screen icon to use its standalone, full-screen app presentation without the normal browser address bar. The app still needs an internet connection to use its account, trading, chat, and payment features; installing it does not make the server-backed app available offline.
+
 ## Build and deploy
 
 ```bash

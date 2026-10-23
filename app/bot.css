@@ -27,13 +27,13 @@ button { color: inherit; }
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(100%, 480px);
+  width: 100%;
   height: 100dvh;
   min-height: 0;
   margin: 0 auto;
   overflow: hidden;
   background: var(--gq-canvas);
-  box-shadow: 0 0 55px rgb(28 39 24 / 8%);
+  box-shadow: none;
 }
 
 .gq-header {
@@ -59,6 +59,8 @@ button { color: inherit; }
 .gq-brand-logo { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
 .gq-header-actions { gap: 8px; }
 .gq-admin-link { display: inline-flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid #eee1a3; border-radius: 8px; background: #fff9df; color: #665300; font-size: 11px; font-weight: 700; text-decoration: none; }
+.gq-install-button { display: inline-flex; min-height: 35px; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid #e8d88c; border-radius: 8px; background: #fff9df; color: #665300; font-size: 10px; font-weight: 750; cursor: pointer; }
+.gq-install-button.is-compact { width: 36px; min-height: 36px; padding: 0; border-radius: 50%; }
 .gq-icon-button, .gq-avatar {
   display: inline-grid;
   flex: 0 0 40px;
@@ -333,7 +335,7 @@ button { color: inherit; }
 
 .gq-auth-screen, .gq-loading-screen { display: grid; width: 100%; min-height: 100dvh; place-items: center; overflow-y: auto; padding: max(24px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom)); background: radial-gradient(ellipse at 50% 0%, #fff4bf 0, #f8f9f5 48%, #f1f4ee 100%); }
 .gq-auth-panel { width: min(100%, 400px); padding: 22px 20px 19px; border: 1px solid #e6e9e2; border-radius: 15px; background: rgb(255 255 255 / 95%); box-shadow: 0 18px 60px rgb(34 42 29 / 9%); animation: gq-enter .35s ease both; }
-.gq-auth-panel > .gq-brand-lockup { margin-bottom: 30px; }
+.gq-auth-brand-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 30px; }
 .gq-auth-panel > .gq-eyebrow { margin-bottom: 8px; }
 .gq-auth-panel h1 { margin: 0; font-size: 26px; font-weight: 760; }
 .gq-auth-copy { margin: 7px 0 21px; color: var(--gq-muted); font-size: 12px; line-height: 1.5; }
@@ -346,6 +348,15 @@ button { color: inherit; }
 .gq-auth-switch button { border: 0; background: transparent; color: #715b00; font-weight: 750; cursor: pointer; }
 .gq-security-note { justify-content: center; gap: 6px; color: #899086; font-size: 10px; }
 .gq-security-note svg { color: #53795f; }
+.gq-install-dialog-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(22 27 21 / 48%); backdrop-filter: blur(3px); }
+.gq-install-dialog { position: relative; display: grid; width: min(100%, 370px); gap: 13px; padding: 25px; border: 1px solid var(--gq-line); border-radius: 15px; background: white; box-shadow: 0 20px 60px rgb(0 0 0 / 18%); }
+.gq-install-dialog-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; background: #fff3bb; color: #725b00; }
+.gq-install-dialog h2 { margin: 0; font-size: 19px; }
+.gq-install-dialog p { margin: 0; color: #5f665d; font-size: 12px; line-height: 1.6; }
+.gq-install-dialog .gq-install-note { color: var(--gq-muted); font-size: 10px; }
+.gq-install-dialog .gq-primary-button { width: 100%; }
+.gq-install-inline-icon { display: inline-block; vertical-align: middle; }
+.gq-install-close { position: absolute; top: 12px; right: 12px; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--gq-line); border-radius: 50%; background: white; cursor: pointer; }
 .gq-admin-shell { display: grid; width: 100%; height: 100dvh; min-height: 0; grid-template-columns: 248px minmax(0, 1fr); overflow: hidden; background: var(--gq-canvas); }
 .gq-admin-sidebar { z-index: 30; display: flex; min-height: 0; flex-direction: column; padding: 22px 16px 15px; border-right: 1px solid var(--gq-line); background: #fff; }
 .gq-admin-brand { display: flex; align-items: center; gap: 11px; padding: 3px 7px 23px; }
