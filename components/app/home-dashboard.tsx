@@ -27,6 +27,8 @@ interface TradingConfig {
   cooldownMinutes: number;
 }
 
+const SUPPORTED_CONTRACT_TYPES = ['CALL', 'PUT'];
+
 function money(value: number, currency?: string): string {
   if (!currency) return 'Unavailable';
   try {
@@ -54,7 +56,7 @@ function findCandidate(prices: number[]): 'CALL' | 'PUT' | null {
 export function HomeDashboard() {
   const { ws, isConnected, isExhausted, auth } = useDerivWSContext();
   const { authState, activeAccount, activeAccountId, login, logout } = auth;
-  const trading = useBaseTrading({ ws, isConnected, isExhausted, isAuthenticated: !!auth.wsUrl, onAuthWSFailed: () => { void logout(); }, contractTypes: ['CALL', 'PUT'], preferredSymbol: FIXED_TRADING_SYMBOL });
+  const trading = useBaseTrading({ ws, isConnected, isExhausted, isAuthenticated: !!auth.wsUrl, onAuthWSFailed: () => { void logout(); }, contractTypes: SUPPORTED_CONTRACT_TYPES, preferredSymbol: FIXED_TRADING_SYMBOL });
   const { prices } = useTicks(ws, isConnected, trading.activeSymbol, 60);
   const [entries, setEntries] = useState<ConsoleEntry[]>([]);
   const [connectError, setConnectError] = useState('');

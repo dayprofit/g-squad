@@ -14,7 +14,8 @@ Create `.env.local` with the server-only Neon connection string, encryption key,
 
 ```env
 DATABASE_URL=postgresql://user:password@host/database?sslmode=require
-DERIV_TOKEN_ENCRYPTION_KEY=generate-a-base64-encoded-32-byte-key
+# Generate with: openssl rand -base64 32
+DERIV_TOKEN_ENCRYPTION_KEY=
 
 NEXT_PUBLIC_DERIV_APP_ID=your-registered-app-id
 NEXT_PUBLIC_DERIV_REDIRECT_URI=http://localhost:3000
@@ -23,7 +24,7 @@ NEXT_PUBLIC_DERIV_OAUTH_SCOPES=trade
 NEXT_PUBLIC_DERIV_ENV=production
 ```
 
-Generate the encryption key with `openssl rand -base64 32`. Never use a `NEXT_PUBLIC_` prefix for database credentials, the encryption key, or Deriv tokens. Do not commit `.env.local` or production secrets. The database role needs permission to create tables and indexes and to read/write application data.
+Generate a key with `openssl rand -base64 32`, then set its output as `DERIV_TOKEN_ENCRYPTION_KEY` in `.env.local` and in the server environment for production. Keep the same key across deployments and restarts; changing it makes previously encrypted Deriv credentials unreadable. Never use a `NEXT_PUBLIC_` prefix for database credentials, the encryption key, or Deriv tokens. Do not commit `.env.local` or production secrets. The database role needs permission to create tables and indexes and to read/write application data.
 
 The app creates its Postgres tables and indexes automatically when first used:
 

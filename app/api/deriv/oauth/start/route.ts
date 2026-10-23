@@ -13,7 +13,11 @@ export async function POST(request: Request) {
     const authorizationUrl = await createOAuthFlow(user.id, request.url, landingSearch);
     return NextResponse.json({ authorizationUrl });
   } catch (error) {
-    console.error('Could not begin Deriv authorization:', error instanceof Error ? error.message : 'Unknown error');
-    return NextResponse.json({ error: 'Deriv connection could not be started. Check server configuration.' }, { status: 503 });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Could not begin Deriv authorization:', message);
+    const errorMessage = message.startsWith('DERIV_TOKEN_ENCRYPTION_KEY')
+      ? message
+      : 'Deriv connection could not be started. Check server configuration.';
+    return NextResponse.json({ error: errorMessage }, { status: 503 });
   }
 }

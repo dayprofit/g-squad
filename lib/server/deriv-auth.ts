@@ -20,10 +20,18 @@ interface TokenPayload {
 }
 
 function encryptionKey(): Buffer {
-  const value = process.env.DERIV_TOKEN_ENCRYPTION_KEY;
-  if (!value) throw new Error('DERIV_TOKEN_ENCRYPTION_KEY is not configured.');
+  const value = process.env.DERIV_TOKEN_ENCRYPTION_KEY?.trim();
+  if (!value) {
+    throw new Error('DERIV_TOKEN_ENCRYPTION_KEY is not configured. Generate one with "openssl rand -base64 32" and set it in the server environment.');
+  }
   const key = Buffer.from(value, 'base64');
-  if (key.length !== 32) throw new Error('DERIV_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.');
+  if (
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value) ||
+    key.length !== 32 ||
+    key.toString('base64') !== value
+  ) {
+    throw new Error('DERIV_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key. Generate one with "openssl rand -base64 32".');
+  }
   return key;
 }
 
@@ -57,6 +65,7 @@ function requestedScopes(): string {
 }
 
 export async function createOAuthFlow(userId: string, callbackUrl: string, landingSearch = ''): Promise<string> {
+  encryptionKey();
   const state = randomBytes(32).toString('base64url');
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
